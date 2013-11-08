@@ -2,21 +2,35 @@ package com.typesafe.jse
 
 import akka.actor._
 import scala.sys.process._
-import java.io.InputStream
 import akka.contrib.pattern.Aggregator
-import com.typesafe.jse.LocalEngine._
-import scala.concurrent.duration._
-import scala.io.Source
-import com.typesafe.jse.Engine.{JsExecutionOutput, JsExecutionError, ExecuteJs}
-import com.typesafe.jse.LocalEngine.ErrorEvent
+import com.typesafe.jse.Engine._
 import scala.collection.mutable.ListBuffer
+import com.typesafe.jse.Engine.ExecuteJs
+import com.typesafe.jse.Engine.ErrorEvent
+import java.io.InputStream
+import scala.io.Source
 
 /**
  * Provides an Actor on behalf of a JavaScript Engine. Engines are represented as operating system processes and are
  * communicated with by launching with arguments and returning a status code.
  * @param stdArgs a sequence of standard command line arguments used to launch the engine from the command line.
  */
-class LocalEngine(stdArgs: Seq[String]) extends Engine with ActorLogging with Aggregator {
+class LocalEngine(stdArgs: Seq[String]) extends Engine with Aggregator {
+
+  /*
+ * Given an input stream, consume characters into a string buffer and communicate the event
+ * to the engine. If there's nothing left on the input stream then signal this to the engine.
+ */
+  protected def respond(is: InputStream, engine: ActorRef, eventFactory: String => IOEvent): Unit = {
+    val source = Source.fromInputStream(is)
+    val sb = new StringBuilder
+    source.getLines().foreach(sb.append)
+    val reader = source.reader()
+    val nextChar = reader.read()
+    if (nextChar != -1) sb.append(nextChar)
+    engine ! eventFactory(sb.toString)
+    if (nextChar == -1) engine ! FinalEvent
+  }
 
   expectOnce {
     case ExecuteJs(f, args, timeout) =>
@@ -24,55 +38,10 @@ class LocalEngine(stdArgs: Seq[String]) extends Engine with ActorLogging with Ag
       lb ++= stdArgs
       lb += f.getCanonicalPath
       lb ++= args
-      new ProcessIOHandler(sender, timeout)
-      val pio = new ProcessIO(_ => (), self ! OutputEvent(_), self ! ErrorEvent(_))
+      new EngineIOHandler(sender, timeout)
+      val pio = new ProcessIO(_ => (), respond(_, self, OutputEvent), respond(_, self, ErrorEvent))
       Process(lb.toSeq).run(pio)
   }
-
-  private class ProcessIOHandler(originalSender: ActorRef, timeout: FiniteDuration) {
-
-    import context.dispatcher
-
-    val errorBuilder = new StringBuilder
-    val outputBuilder = new StringBuilder
-
-    context.system.scheduler.scheduleOnce(timeout, self, TimedOut)
-
-    def handleResponse(is: InputStream, sb: StringBuilder): Unit = {
-      val source = Source.fromInputStream(is)
-      source.getLines().foreach(sb.append)
-      val reader = source.reader()
-      val nextChar = reader.read()
-      if (nextChar == -1) processFinal() else sb.append(nextChar)
-    }
-
-    val processActivity = expect {
-      case ErrorEvent(is) => handleResponse(is, errorBuilder)
-      case OutputEvent(is) => handleResponse(is, outputBuilder)
-      case TimedOut ⇒ processFinal()
-    }
-
-    def processFinal() {
-      unexpect(processActivity)
-      if (errorBuilder.length > 0) {
-        originalSender ! JsExecutionError(errorBuilder.toString())
-      } else {
-        originalSender ! JsExecutionOutput(outputBuilder.toString())
-      }
-      context.stop(self)
-    }
-
-  }
-
-}
-
-object LocalEngine {
-
-  private[jse] case class OutputEvent(is: InputStream)
-
-  private[jse] case class ErrorEvent(is: InputStream)
-
-  private[jse] case object TimedOut
 
 }
 

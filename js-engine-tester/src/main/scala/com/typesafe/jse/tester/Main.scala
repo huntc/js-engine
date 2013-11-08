@@ -4,7 +4,7 @@ import akka.actor.ActorSystem
 import akka.pattern.ask
 import akka.pattern.gracefulStop
 
-import com.typesafe.jse.{CommonNode, Engine}
+import com.typesafe.jse.{Rhino, CommonNode, Engine}
 import akka.util.Timeout
 import scala.concurrent.duration._
 import scala.concurrent.ExecutionContext.Implicits.global
@@ -22,10 +22,10 @@ object Main {
       System.exit(1)
     }
 
-    val engine = system.actorOf(CommonNode.props(), "localengine")
+    val engine = system.actorOf(Rhino.props(), "engine")
     val f = new File(Main.getClass.getResource("test.js").toURI)
     for (
-      result <- (engine ? Engine.ExecuteJs(f, Seq("999"))).mapTo[JsExecutionOutput]
+      result <- (engine ? Engine.ExecuteJs(f, Seq("999")))
     ) yield {
       println(result)
 
