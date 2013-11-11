@@ -13,7 +13,7 @@ import com.typesafe.js.sbt.JavaScriptPlugin
 /**
  * Declares the main parts of a WebDriver based plugin for sbt.
  */
-abstract class JsEnginePlugin extends JavaScriptPlugin {
+abstract class JsEnginePlugin extends sbt.Plugin {
 
   object JsEngineKeys {
 
@@ -32,7 +32,7 @@ abstract class JsEnginePlugin extends JavaScriptPlugin {
 
   override val globalSettings: Seq[Setting[_]] = Seq(
     engineType := EngineType.Rhino,
-    parallelism := java.lang.Runtime.getRuntime.availableProcessors() + 1,
+    parallelism := java.lang.Runtime.getRuntime.availableProcessors() + 1
   )
 
   /*
