@@ -9,8 +9,8 @@ import akka.util.Timeout
 import scala.concurrent.duration._
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.{Future, Await}
-import com.typesafe.jse.Engine.JsExecutionOutput
 import java.io.File
+import com.typesafe.jse.Engine.JsExecutionOutput
 
 object Main {
   def main(args: Array[String]) {
@@ -22,12 +22,12 @@ object Main {
       System.exit(1)
     }
 
-    val engine = system.actorOf(Rhino.props(), "engine")
+    val engine = system.actorOf(CommonNode.props(), "engine")
     val f = new File(Main.getClass.getResource("test.js").toURI)
     for (
-      result <- (engine ? Engine.ExecuteJs(f, Seq("999")))
+      result <- (engine ? Engine.ExecuteJs(f, Seq("999"))).mapTo[JsExecutionOutput]
     ) yield {
-      println(result)
+      println(new String(result.output.toArray, "UTF-8"))
 
       try {
         val stopped: Future[Boolean] = gracefulStop(engine, 1.second)

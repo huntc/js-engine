@@ -6,8 +6,9 @@ import scala.concurrent.duration.FiniteDuration
 import akka.contrib.pattern.Aggregator
 import com.typesafe.jse.Engine._
 import com.typesafe.jse.Engine.JsExecutionOutput
-import com.typesafe.jse.Engine.ErrorEvent
 import com.typesafe.jse.Engine.JsExecutionError
+import akka.contrib.process.Process.{Ack, EOF, OutputEvent, ErrorEvent}
+import akka.util.ByteString
 
 /**
  * A JavaScript engine. Engines are intended to be short-lived and will terminate themselves on
@@ -24,23 +25,27 @@ abstract class Engine extends Actor with Aggregator {
 
     import context.dispatcher
 
-    val errorBuilder = new StringBuilder
-    val outputBuilder = new StringBuilder
+    val errorBuilder = ByteString.newBuilder
+    val outputBuilder = ByteString.newBuilder
 
     context.system.scheduler.scheduleOnce(timeout, self, TimedOut)
 
     val processActivity = expect {
-      case ErrorEvent(error) => errorBuilder.append(error)
-      case OutputEvent(output) => outputBuilder.append(output)
-      case FinalEvent | TimedOut => processFinal()
+      case e: ErrorEvent =>
+        errorBuilder ++= e.data
+        sender ! Ack
+      case o: OutputEvent =>
+        outputBuilder ++= o.data
+        sender ! Ack
+      case EOF | TimedOut => processFinal()
     }
 
     def processFinal() {
       unexpect(processActivity)
       if (errorBuilder.length > 0) {
-        originalSender ! JsExecutionError(errorBuilder.toString())
+        originalSender ! JsExecutionError(errorBuilder.result())
       } else {
-        originalSender ! JsExecutionOutput(outputBuilder.toString())
+        originalSender ! JsExecutionOutput(outputBuilder.result())
       }
       context.stop(self)
     }
@@ -59,32 +64,12 @@ object Engine {
   /**
    * The error response of JS execution. If this is sent then they'll be no JsExecutionOutput.
    */
-  case class JsExecutionError(error: String)
+  case class JsExecutionError(error: ByteString)
 
   /**
    * The output of a JS execution.
    */
-  case class JsExecutionOutput(output: String)
-
-  /**
-   * For describing IO events.
-   */
-  sealed class IOEvent(data: String)
-
-  /**
-   * Stream some output.
-   */
-  case class OutputEvent(output: String) extends IOEvent(output)
-
-  /**
-   * Stream some error.
-   */
-  case class ErrorEvent(error: String) extends IOEvent(error)
-
-  /**
-   * Signal that there are no more events.
-   */
-  case object FinalEvent
+  case class JsExecutionOutput(output: ByteString)
 
   // Internal types
 
