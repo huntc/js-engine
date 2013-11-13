@@ -14,7 +14,7 @@ illustrates essential interactions. Here is a snippet of it:
     val engine = system.actorOf(Node.props(), "engine")
     val f = new File(Main.getClass.getResource("test.js").toURI)
     for (
-      result <- (engine ? Engine.ExecuteJs(f, Seq("999"))).mapTo[JsExecutionOutput]
+      result <- (engine ? Engine.ExecuteJs(f, Seq("999"))).mapTo[JsExecutionResult]
     ) yield {
       println(new String(result.output.toArray, "UTF-8"))
       ...

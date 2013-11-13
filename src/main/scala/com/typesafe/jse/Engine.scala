@@ -5,10 +5,10 @@ import scala.concurrent.duration._
 import scala.concurrent.duration.FiniteDuration
 import akka.contrib.pattern.Aggregator
 import com.typesafe.jse.Engine._
-import com.typesafe.jse.Engine.JsExecutionOutput
-import com.typesafe.jse.Engine.JsExecutionError
-import akka.contrib.process.Process.{Ack, EOF, OutputEvent, ErrorEvent}
+import akka.contrib.process.Process._
 import akka.util.ByteString
+import akka.contrib.process.Process.OutputData
+import akka.contrib.process.Process.ErrorData
 
 /**
  * A JavaScript engine. Engines are intended to be short-lived and will terminate themselves on
@@ -28,26 +28,27 @@ abstract class Engine extends Actor with Aggregator {
     val errorBuilder = ByteString.newBuilder
     val outputBuilder = ByteString.newBuilder
 
-    context.system.scheduler.scheduleOnce(timeout, self, TimedOut)
+    context.system.scheduler.scheduleOnce(timeout, self, FinishProcessing)
 
-    val processActivity = expect {
-      case e: ErrorEvent =>
+    var errorDone, outputDone = false
+
+    val processActivity: Actor.Receive = expect {
+      case e: ErrorData =>
         errorBuilder ++= e.data
         sender ! Ack
-      case o: OutputEvent =>
+      case o: OutputData =>
         outputBuilder ++= o.data
         sender ! Ack
-      case EOF | TimedOut => processFinal()
-    }
-
-    def processFinal() {
-      unexpect(processActivity)
-      if (errorBuilder.length > 0) {
-        originalSender ! JsExecutionError(errorBuilder.result())
-      } else {
-        originalSender ! JsExecutionOutput(outputBuilder.result())
-      }
-      context.stop(self)
+      case ErrorDone =>
+        errorDone = true
+        if (outputDone) self ! FinishProcessing
+      case OutputDone =>
+        outputDone = true
+        if (errorDone) self ! FinishProcessing
+      case FinishProcessing =>
+        unexpect(processActivity)
+        originalSender ! JsExecutionResult(outputBuilder.result(), errorBuilder.result())
+        context.stop(self)
     }
 
   }
@@ -62,17 +63,12 @@ object Engine {
   case class ExecuteJs(source: java.io.File, args: Seq[String], timeout: FiniteDuration = 10.seconds)
 
   /**
-   * The error response of JS execution. If this is sent then they'll be no JsExecutionOutput.
+   * The response of JS execution in the cases where it has been aggregated.
    */
-  case class JsExecutionError(error: ByteString)
-
-  /**
-   * The output of a JS execution.
-   */
-  case class JsExecutionOutput(output: ByteString)
+  case class JsExecutionResult(output: ByteString, error: ByteString)
 
   // Internal types
 
-  private[jse] case object TimedOut
+  private[jse] case object FinishProcessing
 
 }
