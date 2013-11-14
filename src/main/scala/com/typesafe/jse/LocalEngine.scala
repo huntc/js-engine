@@ -5,6 +5,7 @@ import scala.collection.mutable.ListBuffer
 import com.typesafe.jse.Engine.ExecuteJs
 import akka.contrib.process.Process
 import akka.contrib.process.Process.Started
+import scala.collection.immutable
 
 /**
  * Provides an Actor on behalf of a JavaScript Engine. Engines are represented as operating system processes and are
@@ -20,7 +21,7 @@ class LocalEngine(stdArgs: Seq[String]) extends Engine {
       lb ++= stdArgs
       lb += f.getCanonicalPath
       lb ++= args
-      context.actorOf(Process.props(lb, self)(context.system))
+      context.actorOf(Process.props(lb.to[immutable.Seq], self))
       expectOnce {
         case Started(i, o, e) => new EngineIOHandler(o, e, requester, timeout)
       }

@@ -3,7 +3,9 @@ package akka.contrib.process
 import akka.actor._
 import akka.util.ByteString
 import java.io._
-import scala.collection.JavaConversions._
+import scala.collection.JavaConverters._
+import scala.collection.immutable
+import scala.concurrent.blocking
 import java.lang.{ProcessBuilder => JdkProcessBuilder}
 import akka.contrib.process.Process.Started
 import akka.contrib.process.StreamEvents.{Done, Ack, Output}
@@ -12,34 +14,30 @@ import akka.contrib.process.StreamEvents.{Done, Ack, Output}
  * Process encapsulates an operating system process and its ability to be communicated with
  * via stdio i.e. stdin, stdout and stderr.
  */
-class Process(args: Seq[String], receiver: ActorRef, blockingDispatcherId: String, detached: Boolean)
+class Process(args: immutable.Seq[String], receiver: ActorRef, detached: Boolean)
   extends Actor {
 
-  val pb = new JdkProcessBuilder(args.toList)
+  val pb = new JdkProcessBuilder(args.asJava)
   val p = pb.start()
 
-  val stdinSink = context.actorOf(Sink.props(p.getOutputStream)(context.system).withDispatcher(blockingDispatcherId))
-  val stdoutSource = context.actorOf(Source.props(p.getInputStream, receiver)(context.system).withDispatcher(blockingDispatcherId))
-  val stderrSource = context.actorOf(Source.props(p.getErrorStream, receiver)(context.system).withDispatcher(blockingDispatcherId))
+  val stdinSink = context.actorOf(Sink.props(p.getOutputStream))
+  val stdoutSource = context.watch(context.actorOf(Source.props(p.getInputStream, receiver)))
+  val stderrSource = context.watch(context.actorOf(Source.props(p.getErrorStream, receiver)))
 
-  context.watch(stdoutSource)
-  context.watch(stderrSource)
-
-  var stdoutTerminated, stderrTerminated = false
+  var openStreams = 2
 
   def receive = {
-    case Terminated(`stdoutSource`) =>
-      stdoutTerminated = true
-      if (stderrTerminated && !detached) context.stop(self)
-    case Terminated(`stderrSource`) =>
-      stderrTerminated = true
-      if (stdoutTerminated && !detached) context.stop(self)
+    case Terminated(`stdoutSource` | `stderrSource`) =>
+      openStreams -= 1
+      if (openStreams == 0 && !detached) context.stop(self)
   }
-
-  receiver ! Started(stdinSink, stdoutSource, stderrSource)
 
   override def postStop() {
     if (!detached) p.destroy()
+  }
+
+  override def preStart() {
+    receiver ! Started(stdinSink, stdoutSource, stderrSource)
   }
 }
 
@@ -49,26 +47,20 @@ object Process {
    * Return the props required to create a process actor.
    * @param args The sequence of string arguments to pass to the process.
    * @param receiver The actor to receive output and error events.
-   * @param blockingDispatcherId The dispatcher id to use for blocking operations.
-   * @param detached Whether the process will be a daemon.
-   * @param system The actor system to use.
+   * @param detached Whether the process will be daemonic.
    * @return a props object that can be used to create the process actor.
    */
   def props(
-             args: Seq[String],
+             args: immutable.Seq[String],
              receiver: ActorRef,
-             blockingDispatcherId: String = "stdio-dispatcher",
              detached: Boolean = false
-             )(implicit system: ActorSystem): Props = {
-    Props(classOf[Process], args, receiver, blockingDispatcherId, detached)
-  }
+             ): Props = Props(classOf[Process], args, receiver, detached)
 
   /**
    * Sent on startup to the receiver - specifies the actors used for managing input, output and
    * error respectively.
    */
   case class Started(stdinSink: ActorRef, stdoutSource: ActorRef, stderrSource: ActorRef)
-
 }
 
 /**
@@ -90,7 +82,6 @@ object StreamEvents {
    * An event conveying data.
    */
   case class Output(data: ByteString)
-
 }
 
 /**
@@ -101,7 +92,7 @@ object StreamEvents {
 class Sink(os: OutputStream) extends Actor {
   def receive = {
     case Output(d) =>
-      os.write(d.toArray)
+      blocking { os.write(d.toArray) }
       sender ! Ack
     case Done => context.stop(self)
   }
@@ -112,9 +103,7 @@ class Sink(os: OutputStream) extends Actor {
 }
 
 object Sink {
-  def props(os: OutputStream)(implicit system: ActorSystem): Props = {
-    Props(classOf[Sink], os)
-  }
+  def props(os: OutputStream): Props = Props(classOf[Sink], os)
 }
 
 /**
@@ -123,31 +112,29 @@ object Sink {
  * input stream is closed.
  */
 class Source(is: InputStream, receiver: ActorRef, pipeSize: Int) extends Actor {
-
+  require(pipeSize > 0)
   val buffer = new Array[Byte](pipeSize)
 
-  def sendBuffer(len: Int): Unit = {
-    if (len > -1) {
-      receiver ! Output(ByteString.fromArray(buffer, 0, len))
-    } else {
-      receiver ! Done
-      context.stop(self)
-    }
-  }
-
   def receive = {
-    case Ack => sendBuffer(is.read(buffer))
+    case Ack =>
+      val len = blocking { is.read(buffer) }
+      if (len > -1) {
+        receiver ! Output(ByteString.fromArray(buffer, 0, len))
+      } else {
+        receiver ! Done
+        context.stop(self)
+      }
   }
-
-  sendBuffer(is.read(buffer))
 
   override def postStop() {
     is.close()
   }
+
+  override def preStart() {
+    self ! Ack // Start reading
+  }
 }
 
 object Source {
-  def props(is: InputStream, receiver: ActorRef, pipeSize: Int = 1024)(implicit system: ActorSystem): Props = {
-    Props(classOf[Source], is, receiver, pipeSize)
-  }
+  def props(is: InputStream, receiver: ActorRef, pipeSize: Int = 1024): Props = Props(classOf[Source], is, receiver, pipeSize)
 }
