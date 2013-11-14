@@ -98,7 +98,7 @@ object StreamEvents {
  * is sent in return. A Done event is expected when there is no more data to be written. On receiving a Done
  * event the associated output stream will be closed.
  */
-class Sink(os: OutputStream, pipeSize: Int) extends Actor {
+class Sink(os: OutputStream) extends Actor {
   def receive = {
     case Output(d) =>
       os.write(d.toArray)
@@ -112,8 +112,8 @@ class Sink(os: OutputStream, pipeSize: Int) extends Actor {
 }
 
 object Sink {
-  def props(os: OutputStream, pipeSize: Int = 1024)(implicit system: ActorSystem): Props = {
-    Props(classOf[Sink], os, pipeSize)
+  def props(os: OutputStream)(implicit system: ActorSystem): Props = {
+    Props(classOf[Sink], os)
   }
 }
 
