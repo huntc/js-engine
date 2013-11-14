@@ -1,9 +1,8 @@
 package akka.contrib.process
 
 import akka.actor._
-import akka.util.{Timeout, ByteString}
+import akka.util.ByteString
 import java.io._
-import scala.concurrent.duration._
 import scala.collection.JavaConversions._
 import java.lang.{ProcessBuilder => JdkProcessBuilder}
 import akka.contrib.process.Process.Started
@@ -125,11 +124,9 @@ object Sink {
  */
 class Source(is: InputStream, receiver: ActorRef, pipeSize: Int) extends Actor {
 
-  implicit val timeout = Timeout(5.seconds)
-
   val buffer = new Array[Byte](pipeSize)
 
-  def sendWithFlowControl(len: Int): Unit = {
+  def sendBuffer(len: Int): Unit = {
     if (len > -1) {
       receiver ! Output(ByteString.fromArray(buffer, 0, len))
     } else {
@@ -139,10 +136,10 @@ class Source(is: InputStream, receiver: ActorRef, pipeSize: Int) extends Actor {
   }
 
   def receive = {
-    case Ack => sendWithFlowControl(is.read(buffer))
+    case Ack => sendBuffer(is.read(buffer))
   }
 
-  sendWithFlowControl(is.read(buffer))
+  sendBuffer(is.read(buffer))
 
   override def postStop() {
     is.close()
