@@ -13,7 +13,8 @@ class Rhino extends Engine {
 
   expectOnce {
     case ExecuteJs(source, args, timeout) =>
-      new EngineIOHandler(sender, timeout)
+// FIXME
+//      new EngineIOHandler(sender, timeout)
 
       if (!Main.getGlobal.isInitialized) {
         Main.getGlobal.init(Main.shellContextFactory)

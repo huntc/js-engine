@@ -1,115 +1,46 @@
 package akka.contrib.process
 
 import akka.actor._
-import scala.sys.process.{Process => ScalaProcess, ProcessIO => ScalaProcessIO}
 import akka.util.{Timeout, ByteString}
-import akka.contrib.process.Process._
 import java.io._
-import akka.contrib.process.Process.InputData
-import akka.contrib.process.Process.OutputData
-import akka.contrib.process.Process.ErrorData
-import akka.pattern.ask
 import scala.concurrent.duration._
-import scala.util.{Try, Failure, Success}
-import scala.concurrent.{Await, Promise}
-import scala.annotation.tailrec
+import scala.collection.JavaConversions._
+import java.lang.{ProcessBuilder => JdkProcessBuilder}
+import akka.contrib.process.Process.Started
+import akka.contrib.process.StreamEvents.{Done, Ack, Output}
 
 /**
  * Process encapsulates an operating system process and its ability to be communicated with
  * via stdio i.e. stdin, stdout and stderr.
- *
- * If the process requires stdin then it can be sent InputEvent objects with an EOF object
- * to signal that there are no more input events.
- *
- * Regular output and errors are communicated to a receiver object which is declared on
- * creating this actor. The last event is signalled by a "done" object. Flow control is also
- * provided in order to avoid performance bottlenecks.
- *
- * Bytestrings are used to minimise copying.
- *
  */
-class Process(args: Seq[String], receiver: ActorRef, pipeSize: Int, daemonize: Boolean)
-  extends Actor
-  with ActorLogging {
+class Process(args: Seq[String], receiver: ActorRef, blockingDispatcherId: String, detached: Boolean)
+  extends Actor {
 
-  val stdinStreamPromise = Promise[OutputStream]()
-  val maybeStdinStream = stdinStreamPromise.future
+  val pb = new JdkProcessBuilder(args.toList)
+  val p = pb.start()
 
-  /*
-   * When we are informed of the output stream to write stdin then we complete a promise so that its
-   * future yields the stream so we can write to it from other threads.
-   */
-  def receiveStdinStream(os: OutputStream): Unit = stdinStreamPromise.success(os)
+  val stdinSink = context.actorOf(Sink.props(p.getOutputStream)(context.system).withDispatcher(blockingDispatcherId))
+  val stdoutSource = context.actorOf(Source.props(p.getInputStream, receiver)(context.system).withDispatcher(blockingDispatcherId))
+  val stderrSource = context.actorOf(Source.props(p.getErrorStream, receiver)(context.system).withDispatcher(blockingDispatcherId))
 
-  /*
-   * Given an input stream, consume bytes into a byte string and communicate the events
-   * to a receiving actor. We employ flow control also so that the receiver isn't
-   * overwhelmed.
-   */
-  def sendEvents(is: InputStream, dataFactory: ByteString => Outbound, doneFactory: => Outbound): Unit = {
+  context.watch(stdoutSource)
+  context.watch(stderrSource)
 
-    implicit val timeout = Timeout(5.seconds)
-
-    val buffer = new Array[Byte](pipeSize)
-
-    def finishSending(): Unit = {
-      is.close()
-      receiver ! doneFactory
-      self ! PoisonPill
-    }
-
-    @tailrec
-    def sendWithFlowControl(len: Int): Unit = {
-      if (len > -1) {
-        // Unfortunately reading from an input stream can block. Such is the JDK.
-        // It is important here that we await the reply as we must continue to
-        // execute the stream IO on the thread given to us by the process library.
-        val reply = receiver ? dataFactory(ByteString.fromArray(buffer, 0, len))
-        Try(Await.result(reply, timeout.duration)) match {
-          case Success(Ack) => sendWithFlowControl(is.read(buffer))
-
-          case Success(x) =>
-            log.error(s"Unknown message received while receiving output: $x")
-            finishSending()
-          case Failure(t) =>
-            log.error(s"Failure while receiving output: $t")
-            finishSending()
-        }
-      } else {
-        finishSending()
-      }
-    }
-    sendWithFlowControl(is.read(buffer))
-  }
-
-  val pio = new ScalaProcessIO(
-    receiveStdinStream,
-    sendEvents(_, OutputData, OutputDone),
-    sendEvents(_, ErrorData, ErrorDone),
-    daemonize
-  )
-  val p = ScalaProcess(args).run(pio)
-
-  def withStdinStream(body: OutputStream => Unit): Unit = {
-    import scala.concurrent.ExecutionContext.Implicits.global
-    maybeStdinStream.onSuccess {
-      case os => body(os)
-    }
-  }
+  var stdoutTerminated, stderrTerminated = false
 
   def receive = {
-    case in: InputData =>
-      withStdinStream {
-        os =>
-          os.write(in.data.toArray)
-          sender ! Ack
-      }
-    case InputDone => withStdinStream(_.close())
+    case Terminated(`stdoutSource`) =>
+      stdoutTerminated = true
+      if (stderrTerminated && !detached) context.stop(self)
+    case Terminated(`stderrSource`) =>
+      stderrTerminated = true
+      if (stdoutTerminated && !detached) context.stop(self)
   }
 
+  receiver ! Started(stdinSink, stdoutSource, stderrSource)
+
   override def postStop() {
-    withStdinStream(_.close())
-    if (!daemonize) p.destroy()
+    if (!detached) p.destroy()
   }
 }
 
@@ -119,58 +50,107 @@ object Process {
    * Return the props required to create a process actor.
    * @param args The sequence of string arguments to pass to the process.
    * @param receiver The actor to receive output and error events.
-   * @param pipeSize The size of buffer used to store input, output and error data.
-   * @param daemonize Whether the process will be a daemon.
+   * @param blockingDispatcherId The dispatcher id to use for blocking operations.
+   * @param detached Whether the process will be a daemon.
    * @param system The actor system to use.
    * @return a props object that can be used to create the process actor.
    */
   def props(
              args: Seq[String],
              receiver: ActorRef,
-             pipeSize: Int = 1024,
-             daemonize: Boolean = false
+             blockingDispatcherId: String = "stdio-dispatcher",
+             detached: Boolean = false
              )(implicit system: ActorSystem): Props = {
-    Props(classOf[Process], args, receiver, pipeSize, daemonize)
+    Props(classOf[Process], args, receiver, blockingDispatcherId, detached)
   }
 
   /**
-   * Outbound constitutes those messages able to be emitted from the actor.
+   * Sent on startup to the receiver - specifies the actors used for managing input, output and
+   * error respectively.
    */
-  sealed trait Outbound
+  case class Started(stdinSink: ActorRef, stdoutSource: ActorRef, stderrSource: ActorRef)
+
+}
+
+/**
+ * Declares the types of event that are involved with streaming.
+ */
+object StreamEvents {
 
   /**
-   * Sent from the outside for situations where a process demands input. Once all
-   * input has been sent then InputDone must be sent. An Ack will be sent in reply to this
-   * event and the sender should not send another input event until it receives it.
-   * @param data the input data to send.
-   */
-  case class InputData(data: ByteString)
-
-  case object InputDone
-
-  /**
-   * Sent to the receiver capturing regular output from the process. The receiver
-   * must send an Ack when it is ready to receive the next event.
-   * @param data the regular output.
-   */
-  case class OutputData(data: ByteString) extends Outbound
-
-  case object OutputDone extends Outbound
-
-  /**
-   * Sent to the receiver capturing regular output from the process. The receiver
-   * must send an Ack when it is ready to receive the next event.
-   * @param data error output.
-   */
-  case class ErrorData(data: ByteString) extends Outbound
-
-  case object ErrorDone extends Outbound
-
-  /**
-   * Sent in response to an event, acknowledging that it has been received.
-   * The sender should ensure that no more events are sent until the ack is received.
-   * The "Done" events do not require an Ack.
+   * Sent in response to an Output even.
    */
   case object Ack
 
+  /**
+   * Sent when no more Output events are expected.
+   */
+  case object Done
+
+  /**
+   * An event conveying data.
+   */
+  case class Output(data: ByteString)
+
+}
+
+/**
+ * A sink of data given an output stream. Flow control is implemented and for each Output event received an Ack
+ * is sent in return. A Done event is expected when there is no more data to be written. On receiving a Done
+ * event the associated output stream will be closed.
+ */
+class Sink(os: OutputStream, pipeSize: Int) extends Actor {
+  def receive = {
+    case Output(d) =>
+      os.write(d.toArray)
+      sender ! Ack
+    case Done => context.stop(self)
+  }
+
+  override def postStop() {
+    os.close()
+  }
+}
+
+object Sink {
+  def props(os: OutputStream, pipeSize: Int = 1024)(implicit system: ActorSystem): Props = {
+    Props(classOf[Sink], os, pipeSize)
+  }
+}
+
+/**
+ * A source of data given an input stream. Flow control is implemented and for each Output event received by the receiver,
+ * an Ack is expected in return. At the end of the source, a Done event will be sent to the receiver and its associated
+ * input stream is closed.
+ */
+class Source(is: InputStream, receiver: ActorRef, pipeSize: Int) extends Actor {
+
+  implicit val timeout = Timeout(5.seconds)
+
+  val buffer = new Array[Byte](pipeSize)
+
+  def sendWithFlowControl(len: Int): Unit = {
+    if (len > -1) {
+      receiver ! Output(ByteString.fromArray(buffer, 0, len))
+    } else {
+      receiver ! Done
+      context.stop(self)
+    }
+  }
+
+  def receive = {
+    case Ack => sendWithFlowControl(is.read(buffer))
+  }
+
+  sendWithFlowControl(is.read(buffer))
+
+  override def postStop() {
+    is.close()
+  }
+}
+
+object Source {
+  def props(is: InputStream, receiver: ActorRef, pipeSize: Int = 1024)(implicit system: ActorSystem): Props = {
+    Props(classOf[Source], is, receiver, pipeSize)
+  }
 }

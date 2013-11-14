@@ -5,10 +5,8 @@ import scala.concurrent.duration._
 import scala.concurrent.duration.FiniteDuration
 import akka.contrib.pattern.Aggregator
 import com.typesafe.jse.Engine._
-import akka.contrib.process.Process._
 import akka.util.ByteString
-import akka.contrib.process.Process.OutputData
-import akka.contrib.process.Process.ErrorData
+import akka.contrib.process.StreamEvents.{Ack, Done, Output}
 
 /**
  * A JavaScript engine. Engines are intended to be short-lived and will terminate themselves on
@@ -21,7 +19,12 @@ abstract class Engine extends Actor with Aggregator {
    * is no more then either a JsExecutionError or JsExecutionOutput is sent to the original
    * requester of execution. Execution may also be timed out.
    */
-  protected class EngineIOHandler(originalSender: ActorRef, timeout: FiniteDuration) {
+  protected class EngineIOHandler(
+                                   stdoutSource: ActorRef,
+                                   stderrSource: ActorRef,
+                                   receiver: ActorRef,
+                                   timeout: FiniteDuration
+                                   ) {
 
     import context.dispatcher
 
@@ -33,22 +36,22 @@ abstract class Engine extends Actor with Aggregator {
     var errorDone, outputDone = false
 
     val processActivity: Actor.Receive = expect {
-      case e: ErrorData =>
-        errorBuilder ++= e.data
+      case o: Output =>
+        sender match {
+          case `stderrSource` => errorBuilder ++= o.data
+          case `stdoutSource` => outputBuilder ++= o.data
+        }
         sender ! Ack
-      case o: OutputData =>
-        outputBuilder ++= o.data
-        sender ! Ack
-      case ErrorDone =>
-        errorDone = true
-        if (outputDone) self ! FinishProcessing
-      case OutputDone =>
-        outputDone = true
-        if (errorDone) self ! FinishProcessing
-      case FinishProcessing =>
-        unexpect(processActivity)
-        originalSender ! JsExecutionResult(outputBuilder.result(), errorBuilder.result())
-        context.stop(self)
+      case Done =>
+        sender match {
+          case `stderrSource` => errorDone = true
+          case `stdoutSource` => outputDone = true
+        }
+        if (errorDone && outputDone) {
+          unexpect(processActivity)
+          receiver ! JsExecutionResult(outputBuilder.result(), errorBuilder.result())
+          context.stop(self)
+        }
     }
 
   }

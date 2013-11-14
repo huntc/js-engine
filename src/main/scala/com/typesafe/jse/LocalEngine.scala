@@ -4,6 +4,7 @@ import akka.actor._
 import scala.collection.mutable.ListBuffer
 import com.typesafe.jse.Engine.ExecuteJs
 import akka.contrib.process.Process
+import akka.contrib.process.Process.Started
 
 /**
  * Provides an Actor on behalf of a JavaScript Engine. Engines are represented as operating system processes and are
@@ -14,14 +15,16 @@ class LocalEngine(stdArgs: Seq[String]) extends Engine {
 
   expectOnce {
     case ExecuteJs(f, args, timeout) =>
+      val requester = sender
       val lb = ListBuffer[String]()
       lb ++= stdArgs
       lb += f.getCanonicalPath
       lb ++= args
-      new EngineIOHandler(sender, timeout)
       context.actorOf(Process.props(lb, self)(context.system))
+      expectOnce {
+        case Started(i, o, e) => new EngineIOHandler(o, e, requester, timeout)
+      }
   }
-
 }
 
 /**
