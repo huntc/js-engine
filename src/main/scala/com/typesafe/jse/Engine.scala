@@ -42,16 +42,10 @@ abstract class Engine extends Actor with Aggregator {
           case `stdoutSource` => outputBuilder ++= o.data
         }
         sender ! Ack
-      case Done =>
-        sender match {
-          case `stderrSource` => errorDone = true
-          case `stdoutSource` => outputDone = true
-        }
-        if (errorDone && outputDone) {
-          unexpect(processActivity)
-          receiver ! JsExecutionResult(outputBuilder.result(), errorBuilder.result())
-          context.stop(self)
-        }
+      case exitValue: Int =>
+        unexpect(processActivity)
+        receiver ! JsExecutionResult(outputBuilder.result(), errorBuilder.result())
+        context.stop(self)
     }
 
   }

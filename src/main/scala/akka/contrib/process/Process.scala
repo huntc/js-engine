@@ -12,7 +12,12 @@ import akka.contrib.process.StreamEvents.{Done, Ack, Output}
 
 /**
  * Process encapsulates an operating system process and its ability to be communicated with
- * via stdio i.e. stdin, stdout and stderr.
+ * via stdio i.e. stdin, stdout and stderr. The sink for stdin and the sources for stdout
+ * and stderr are communicated in a Started event upon the actor being established. The
+ * receiving actor (passed in as a constructor arg) is then subsequently sent stdout and
+ * stderr events. When there are no more stdout or stderr events then the process's exit
+ * code is communicated to the receiver as an int value. The exit code will always be
+ * the last event communicated by the process unless the process is a detached one.
  */
 class Process(args: immutable.Seq[String], receiver: ActorRef, detached: Boolean)
   extends Actor {
@@ -29,7 +34,13 @@ class Process(args: immutable.Seq[String], receiver: ActorRef, detached: Boolean
   def receive = {
     case Terminated(`stdoutSource` | `stderrSource`) =>
       openStreams -= 1
-      if (openStreams == 0 && !detached) context.stop(self)
+      if (openStreams == 0 && !detached) {
+        val exitValue = blocking {
+          p.exitValue()
+        }
+        receiver ! exitValue
+        context.stop(self)
+      }
   }
 
   override def postStop() {
@@ -61,6 +72,7 @@ object Process {
    * error respectively.
    */
   case class Started(stdinSink: ActorRef, stdoutSource: ActorRef, stderrSource: ActorRef)
+
 }
 
 /**
@@ -82,6 +94,7 @@ object StreamEvents {
    * An event conveying data.
    */
   case class Output(data: ByteString)
+
 }
 
 /**
@@ -92,7 +105,9 @@ object StreamEvents {
 class Sink(os: OutputStream) extends Actor {
   def receive = {
     case Output(d) =>
-      blocking { os.write(d.toArray) }
+      blocking {
+        os.write(d.toArray)
+      }
       sender ! Ack
     case Done => context.stop(self)
   }
@@ -117,7 +132,9 @@ class Source(is: InputStream, receiver: ActorRef, pipeSize: Int) extends Actor {
 
   def receive = {
     case Ack =>
-      val len = blocking { is.read(buffer) }
+      val len = blocking {
+        is.read(buffer)
+      }
       if (len > -1) {
         receiver ! Output(ByteString.fromArray(buffer, 0, len))
       } else {
