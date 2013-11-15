@@ -44,7 +44,7 @@ abstract class Engine extends Actor with Aggregator {
         sender ! Ack
       case exitValue: Int =>
         unexpect(processActivity)
-        receiver ! JsExecutionResult(outputBuilder.result(), errorBuilder.result())
+        receiver ! JsExecutionResult(exitValue, outputBuilder.result(), errorBuilder.result())
         context.stop(self)
     }
 
@@ -60,9 +60,11 @@ object Engine {
   case class ExecuteJs(source: java.io.File, args: Seq[String], timeout: FiniteDuration = 10.seconds)
 
   /**
-   * The response of JS execution in the cases where it has been aggregated.
+   * The response of JS execution in the cases where it has been aggregated. A non-zero exit value
+   * indicates failure as per the convention of stdio processes. The output and error fields are
+   * aggregated from any respective output and error streams from the process.
    */
-  case class JsExecutionResult(output: ByteString, error: ByteString)
+  case class JsExecutionResult(exitValue: Int, output: ByteString, error: ByteString)
 
   // Internal types
 
