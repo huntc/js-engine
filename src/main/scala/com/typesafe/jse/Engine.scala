@@ -32,8 +32,6 @@ abstract class Engine extends Actor with Aggregator {
 
     context.system.scheduler.scheduleOnce(timeout, self, timeoutExitValue)(context.dispatcher)
 
-    var errorDone, outputDone = false
-
     val processActivity: Actor.Receive = expect {
       case bytes: ByteString =>
         sender match {
@@ -46,7 +44,6 @@ abstract class Engine extends Actor with Aggregator {
         receiver ! JsExecutionResult(exitValue, outputBuilder.result(), errorBuilder.result())
         context.stop(self)
     }
-
   }
 
 }

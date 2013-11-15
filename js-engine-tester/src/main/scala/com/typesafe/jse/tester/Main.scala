@@ -21,7 +21,7 @@ object Main {
       System.exit(1)
     }
 
-    val engine = system.actorOf(CommonNode.props(), "engine")
+    val engine = system.actorOf(Rhino.props(), "engine")
     val f = new File(Main.getClass.getResource("test.js").toURI)
     for (
       result <- (engine ? Engine.ExecuteJs(f, immutable.Seq("999"))).mapTo[JsExecutionResult]
