@@ -1,6 +1,7 @@
 //var args = require('system').args;
 
 print("Hi there");
+print("and again!");
  //console.log(args[2]);
  //if (phantom !== undefined) phantom.exit();
 /*importPackage(Packages.com.typesafe.jse);

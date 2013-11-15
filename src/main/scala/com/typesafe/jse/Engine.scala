@@ -15,9 +15,10 @@ import com.typesafe.jse.Engine.JsExecutionResult
 abstract class Engine extends Actor with Aggregator {
 
   /*
- * An EngineIOHandler aggregates stdout and stderr from JavaScript execution.
- * Execution may also be timed out.
- */
+  * An EngineIOHandler aggregates stdout and stderr from JavaScript execution.
+  * Execution may also be timed out. The contract is that an exit value is always
+  * only ever sent after all stdio has completed.
+  */
   class EngineIOHandler(
                          stdoutSource: ActorRef,
                          stderrSource: ActorRef,
