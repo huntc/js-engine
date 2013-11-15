@@ -1,17 +1,55 @@
 package com.typesafe.jse
 
-import akka.actor.Actor
+import akka.actor.{ActorRef, Actor}
 import scala.concurrent.duration._
 import scala.concurrent.duration.FiniteDuration
 import akka.contrib.pattern.Aggregator
 import akka.util.ByteString
 import scala.collection.immutable
+import com.typesafe.jse.Engine.JsExecutionResult
 
 /**
- * A JavaScript engine. Engines are intended to be short-lived and will terminate themselves on
+ * A JavaScript engine. JavaScript engines are intended to be short-lived and will terminate themselves on
  * completion of executing some JavaScript.
  */
-abstract class Engine extends Actor with Aggregator
+abstract class Engine extends Actor with Aggregator {
+
+  /*
+ * An EngineIOHandler aggregates stdout and stderr from JavaScript execution.
+ * Execution may also be timed out.
+ */
+  class EngineIOHandler(
+                         stdoutSource: ActorRef,
+                         stderrSource: ActorRef,
+                         receiver: ActorRef,
+                         ack: => Any,
+                         timeout: FiniteDuration,
+                         timeoutExitValue: Int
+                         ) {
+
+    val errorBuilder = ByteString.newBuilder
+    val outputBuilder = ByteString.newBuilder
+
+    context.system.scheduler.scheduleOnce(timeout, self, timeoutExitValue)(context.dispatcher)
+
+    var errorDone, outputDone = false
+
+    val processActivity: Actor.Receive = expect {
+      case bytes: ByteString =>
+        sender match {
+          case `stderrSource` => errorBuilder ++= bytes
+          case `stdoutSource` => outputBuilder ++= bytes
+        }
+        sender ! ack
+      case exitValue: Int =>
+        unexpect(processActivity)
+        receiver ! JsExecutionResult(exitValue, outputBuilder.result(), errorBuilder.result())
+        context.stop(self)
+    }
+
+  }
+
+}
 
 object Engine {
 

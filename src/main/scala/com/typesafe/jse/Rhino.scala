@@ -4,16 +4,20 @@ import com.typesafe.jse.Engine.ExecuteJs
 import akka.actor.Props
 import org.mozilla.javascript.tools.shell.Main
 import scala.collection.mutable.ListBuffer
-import org.mozilla.javascript.{ScriptableObject, Context, NativeJavaObject}
+import org.mozilla.javascript.{ScriptableObject, Context}
+import scala.concurrent.blocking
 
 /**
- * Declares an in-JVM Rhino based JavaScript engine.
+ * Declares an in-JVM Rhino based JavaScript engine. The actor is expected to be
+ * associated with a blocking dispatcher as calls to Rhino are blocking.
  */
 class Rhino extends Engine {
 
   expectOnce {
     case ExecuteJs(source, args, timeout, timeoutExitValue) =>
-      val receiver = sender
+      val requester = sender
+
+      new EngineIOHandler(self, self, requester, (), timeout, timeoutExitValue)
 
       if (!Main.getGlobal.isInitialized) {
         Main.getGlobal.init(Main.shellContextFactory)
@@ -33,8 +37,12 @@ class Rhino extends Engine {
         source.getCanonicalPath
       )
       lb ++= args
-      val exitCode = Main.exec(lb.toArray)
-      receiver ! exitCode
+
+      // We have to assume that Rhino is blocking - who knows what will be going on within the submitted JS?
+      val exitCode = blocking {
+        Main.exec(lb.toArray)
+      }
+      requester ! exitCode
   }
 
 }

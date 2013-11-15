@@ -7,8 +7,8 @@ import scala.collection.JavaConverters._
 import scala.collection.immutable
 import scala.concurrent.blocking
 import java.lang.{ProcessBuilder => JdkProcessBuilder}
-import akka.contrib.process.Process.Started
-import akka.contrib.process.StreamEvents.{Done, Ack, Output}
+import akka.contrib.process.BlockingProcess.Started
+import akka.contrib.process.StreamEvents.{Done, Ack}
 
 /**
  * Process encapsulates an operating system process and its ability to be communicated with
@@ -18,8 +18,11 @@ import akka.contrib.process.StreamEvents.{Done, Ack, Output}
  * stderr events. When there are no more stdout or stderr events then the process's exit
  * code is communicated to the receiver as an int value. The exit code will always be
  * the last event communicated by the process unless the process is a detached one.
+ *
+ * The actor is expected to be associated with a blocking dispatcher as various calls are made
+ * to input and output streams which can block.
  */
-class Process(args: immutable.Seq[String], receiver: ActorRef, detached: Boolean)
+class BlockingProcess(args: immutable.Seq[String], receiver: ActorRef, detached: Boolean)
   extends Actor {
 
   val pb = new JdkProcessBuilder(args.asJava)
@@ -52,7 +55,7 @@ class Process(args: immutable.Seq[String], receiver: ActorRef, detached: Boolean
   }
 }
 
-object Process {
+object BlockingProcess {
 
   /**
    * Return the props required to create a process actor.
@@ -65,7 +68,7 @@ object Process {
              args: immutable.Seq[String],
              receiver: ActorRef,
              detached: Boolean = false
-             ): Props = Props(classOf[Process], args, receiver, detached)
+             ): Props = Props(classOf[BlockingProcess], args, receiver, detached)
 
   /**
    * Sent on startup to the receiver - specifies the actors used for managing input, output and
@@ -90,23 +93,18 @@ object StreamEvents {
    */
   case object Done
 
-  /**
-   * An event conveying data.
-   */
-  case class Output(data: ByteString)
-
 }
 
 /**
- * A sink of data given an output stream. Flow control is implemented and for each Output event received an Ack
+ * A sink of data given an output stream. Flow control is implemented and for each ByteString event received an Ack
  * is sent in return. A Done event is expected when there is no more data to be written. On receiving a Done
  * event the associated output stream will be closed.
  */
 class Sink(os: OutputStream) extends Actor {
   def receive = {
-    case Output(d) =>
+    case bytes: ByteString =>
       blocking {
-        os.write(d.toArray)
+        os.write(bytes.toArray)
       }
       sender ! Ack
     case Done => context.stop(self)
@@ -122,7 +120,7 @@ object Sink {
 }
 
 /**
- * A source of data given an input stream. Flow control is implemented and for each Output event received by the receiver,
+ * A source of data given an input stream. Flow control is implemented and for each ByteString event received by the receiver,
  * an Ack is expected in return. At the end of the source, a Done event will be sent to the receiver and its associated
  * input stream is closed.
  */
@@ -136,7 +134,7 @@ class Source(is: InputStream, receiver: ActorRef, pipeSize: Int) extends Actor {
         is.read(buffer)
       }
       if (len > -1) {
-        receiver ! Output(ByteString.fromArray(buffer, 0, len))
+        receiver ! ByteString.fromArray(buffer, 0, len)
       } else {
         receiver ! Done
         context.stop(self)
