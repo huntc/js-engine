@@ -32,7 +32,7 @@ class LocalEngine(stdArgs: Seq[String]) extends Engine {
  * Used to manage a local instance of Node.js with CommonJs support. common-node is assumed to be on the path.
  */
 object CommonNode {
-  def props()(implicit system: ActorSystem): Props = {
+  def props(): Props = {
     val args = Seq("common-node")
     Props(classOf[LocalEngine], args)
   }
@@ -42,7 +42,7 @@ object CommonNode {
  * Used to manage a local instance of Node.js. Node is assumed to be on the path.
  */
 object Node {
-  def props()(implicit system: ActorSystem): Props = {
+  def props(): Props = {
     val args = Seq("node")
     Props(classOf[LocalEngine], args)
   }
@@ -52,7 +52,7 @@ object Node {
  * Used to manage a local instance of PhantomJS. PhantomJS is assumed to be on the path.
  */
 object PhantomJs {
-  def props()(implicit system: ActorSystem): Props = {
+  def props(): Props = {
     val args = Seq("phantomjs")
     Props(classOf[LocalEngine], args)
   }

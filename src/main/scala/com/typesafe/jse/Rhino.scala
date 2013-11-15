@@ -41,7 +41,7 @@ class Rhino extends Engine {
 
 
 object Rhino {
-  def props()(implicit system: ActorSystem): Props = {
+  def props(): Props = {
     Props(classOf[Rhino])
   }
 
