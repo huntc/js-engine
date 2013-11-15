@@ -9,6 +9,7 @@ import scala.concurrent.duration._
 import scala.concurrent.ExecutionContext.Implicits.global
 import java.io.File
 import com.typesafe.jse.Engine.JsExecutionResult
+import scala.collection.immutable
 
 object Main {
   def main(args: Array[String]) {
@@ -23,7 +24,7 @@ object Main {
     val engine = system.actorOf(CommonNode.props(), "engine")
     val f = new File(Main.getClass.getResource("test.js").toURI)
     for (
-      result <- (engine ? Engine.ExecuteJs(f, Seq("999"))).mapTo[JsExecutionResult]
+      result <- (engine ? Engine.ExecuteJs(f, immutable.Seq("999"))).mapTo[JsExecutionResult]
     ) yield {
       println(new String(result.output.toArray, "UTF-8"))
 

@@ -1,7 +1,7 @@
 package com.typesafe.jse
 
 import com.typesafe.jse.Engine.ExecuteJs
-import akka.actor.{Props, ActorSystem}
+import akka.actor.Props
 import org.mozilla.javascript.tools.shell.Main
 import scala.collection.mutable.ListBuffer
 import org.mozilla.javascript.{ScriptableObject, Context, NativeJavaObject}
@@ -12,9 +12,8 @@ import org.mozilla.javascript.{ScriptableObject, Context, NativeJavaObject}
 class Rhino extends Engine {
 
   expectOnce {
-    case ExecuteJs(source, args, timeout) =>
-// FIXME
-//      new EngineIOHandler(sender, timeout)
+    case ExecuteJs(source, args, timeout, timeoutExitValue) =>
+      val receiver = sender
 
       if (!Main.getGlobal.isInitialized) {
         Main.getGlobal.init(Main.shellContextFactory)
@@ -34,7 +33,8 @@ class Rhino extends Engine {
         source.getCanonicalPath
       )
       lb ++= args
-      Main.exec(lb.toArray)
+      val exitCode = Main.exec(lb.toArray)
+      receiver ! exitCode
   }
 
 }

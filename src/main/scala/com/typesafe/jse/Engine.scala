@@ -1,63 +1,33 @@
 package com.typesafe.jse
 
-import akka.actor.{ActorRef, Actor}
+import akka.actor.Actor
 import scala.concurrent.duration._
 import scala.concurrent.duration.FiniteDuration
 import akka.contrib.pattern.Aggregator
-import com.typesafe.jse.Engine._
 import akka.util.ByteString
-import akka.contrib.process.StreamEvents.{Ack, Done, Output}
+import scala.collection.immutable
 
 /**
  * A JavaScript engine. Engines are intended to be short-lived and will terminate themselves on
  * completion of executing some JavaScript.
  */
-abstract class Engine extends Actor with Aggregator {
-
-  /*
-   * An EngineIOHandler aggregates stdout and stderr from JavaScript execution. When there
-   * is no more then either a JsExecutionError or JsExecutionOutput is sent to the original
-   * requester of execution. Execution may also be timed out.
-   */
-  protected class EngineIOHandler(
-                                   stdoutSource: ActorRef,
-                                   stderrSource: ActorRef,
-                                   receiver: ActorRef,
-                                   timeout: FiniteDuration
-                                   ) {
-
-    import context.dispatcher
-
-    val errorBuilder = ByteString.newBuilder
-    val outputBuilder = ByteString.newBuilder
-
-    context.system.scheduler.scheduleOnce(timeout, self, FinishProcessing)
-
-    var errorDone, outputDone = false
-
-    val processActivity: Actor.Receive = expect {
-      case o: Output =>
-        sender match {
-          case `stderrSource` => errorBuilder ++= o.data
-          case `stdoutSource` => outputBuilder ++= o.data
-        }
-        sender ! Ack
-      case exitValue: Int =>
-        unexpect(processActivity)
-        receiver ! JsExecutionResult(exitValue, outputBuilder.result(), errorBuilder.result())
-        context.stop(self)
-    }
-
-  }
-
-}
+abstract class Engine extends Actor with Aggregator
 
 object Engine {
 
   /**
-   * Execute JS.
+   * Execute JS. Execution will result in a JsExecutionResult being replied to the sender.
+   * @param source The source file to execute.
+   * @param args The sequence of arguments to pass to the js source.
+   * @param timeout The amount of time to wait for the js to execute.
+   * @param timeoutExitValue The exit value to receive if the above timeout occurs.
    */
-  case class ExecuteJs(source: java.io.File, args: Seq[String], timeout: FiniteDuration = 10.seconds)
+  case class ExecuteJs(
+                        source: java.io.File,
+                        args: immutable.Seq[String],
+                        timeout: FiniteDuration = 10.seconds,
+                        timeoutExitValue: Int = -1
+                        )
 
   /**
    * The response of JS execution in the cases where it has been aggregated. A non-zero exit value
