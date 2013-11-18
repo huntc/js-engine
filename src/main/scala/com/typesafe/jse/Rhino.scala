@@ -183,7 +183,8 @@ private[jse] object RhinoShell {
         jsOs.unwrap() match {
           case os: OutputStream =>
             args.foreach {
-              arg => val s = Context.toString(arg)
+              arg =>
+                val s = Context.toString(arg)
                 os.write(s.getBytes("UTF-8"))
             }
             os.write(lineSeparator)

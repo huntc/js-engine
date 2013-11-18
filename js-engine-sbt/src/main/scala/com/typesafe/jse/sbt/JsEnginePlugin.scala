@@ -1,14 +1,9 @@
 package com.typesafe.jse.sbt
 
 import sbt._
-import sbt.Keys._
-import akka.actor.{ActorSystem, ActorRef}
-import akka.pattern.gracefulStop
-import com.typesafe.jse.{LocalEngine, PhantomJs}
+import akka.actor.ActorSystem
 import akka.util.Timeout
 import scala.concurrent.duration._
-import scala.concurrent.{Await, Future}
-import com.typesafe.js.sbt.JavaScriptPlugin
 
 /**
  * Declares the main parts of a WebDriver based plugin for sbt.

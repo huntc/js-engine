@@ -10,4 +10,4 @@ libraryDependencies ++= Seq(
   "com.typesafe" %% "jse" % "1.0.0-SNAPSHOT"
 )
 
-addSbtPlugin("com.typesafe" %% "js-sbt" % "1.0.0-SNAPSHOT")
+addSbtPlugin("com.typesafe" %% "web-sbt" % "1.0.0-SNAPSHOT")
