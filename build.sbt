@@ -4,7 +4,7 @@ name := "jse"
 
 version := "1.0.0-SNAPSHOT"
 
-scalaVersion := "2.10.2"
+scalaVersion := "2.10.3"
 
 resolvers ++= Seq(
   "spray nightlies repo" at "http://nightlies.spray.io",
@@ -18,11 +18,11 @@ libraryDependencies ++= Seq(
   "io.spray" %% "spray-json" % "1.2.5",
   "org.specs2" %% "specs2" % "2.2.2" % "test",
   "junit" % "junit" % "4.11" % "test",
-  "com.typesafe.akka" %% "akka-testkit" % "2.2.1" % "test"
+  "com.typesafe.akka" %% "akka-testkit" % "2.2.3" % "test"
 )
 
 lazy val root = project.in( file(".") )
 
-lazy val `js-engine-sbt` = project.dependsOn(root)
+lazy val `sbt-js-engine` = project.dependsOn(root)
 
 lazy val `js-engine-tester` = project.dependsOn(root)

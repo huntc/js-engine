@@ -2,7 +2,7 @@ sbtPlugin := true
 
 organization := "com.typesafe"
 
-name := "js-engine-sbt"
+name := "sbt-js-engine"
 
 version := "1.0.0-SNAPSHOT"
 
