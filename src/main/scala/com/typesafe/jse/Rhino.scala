@@ -1,6 +1,6 @@
 package com.typesafe.jse
 
-import akka.actor.{ActorRef, Actor, Props}
+import akka.actor._
 import org.mozilla.javascript.tools.shell.Main
 import scala.collection.mutable.ListBuffer
 import org.mozilla.javascript._
@@ -9,6 +9,7 @@ import java.io._
 import akka.contrib.process.StreamEvents.Ack
 import akka.contrib.process.Source
 import scala.collection.immutable
+import com.typesafe.jse.Engine.ExecuteJs
 import com.typesafe.jse.Engine.ExecuteJs
 import akka.actor.Terminated
 
@@ -86,7 +87,7 @@ private[jse] class RhinoShell(
                                args: immutable.Seq[String],
                                stdoutOs: OutputStream, stdoutSource: ActorRef,
                                stderrOs: OutputStream, stderrSource: ActorRef
-                               ) extends Actor {
+                               ) extends Actor with ActorLogging {
 
   // A utility to safely manage Rhino contexts.
   def withContext(block: => Unit): Unit = {
@@ -126,7 +127,10 @@ private[jse] class RhinoShell(
 
   val exitCode = blocking {
     try {
-      Main.exec(args.toArray)
+      if (log.isDebugEnabled) {
+        log.debug("Invoking Rhino with {}", lb.toString())
+      }
+      Main.exec(lb.toArray)
     } finally {
       stdoutOs.close()
       stderrOs.close()

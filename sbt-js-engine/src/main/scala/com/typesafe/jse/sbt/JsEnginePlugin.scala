@@ -8,7 +8,7 @@ import scala.concurrent.duration._
 /**
  * Declares the main parts of a WebDriver based plugin for sbt.
  */
-abstract class JsEnginePlugin extends sbt.Plugin {
+object JsEnginePlugin extends sbt.Plugin {
 
   object JsEngineKeys {
 
