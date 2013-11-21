@@ -10,7 +10,6 @@ import akka.contrib.process.StreamEvents.Ack
 import akka.contrib.process.Source
 import scala.collection.immutable
 import com.typesafe.jse.Engine.ExecuteJs
-import com.typesafe.jse.Engine.ExecuteJs
 import akka.actor.Terminated
 
 /**
@@ -89,23 +88,7 @@ private[jse] class RhinoShell(
                                stderrOs: OutputStream, stderrSource: ActorRef
                                ) extends Actor with ActorLogging {
 
-  // A utility to safely manage Rhino contexts.
-  def withContext(block: => Unit): Unit = {
-    Context.enter()
-    try block finally {
-      Context.exit()
-    }
-  }
-
-  // Initialise our Rhino environment. If we've never done so before then do general Rhino shell
-  // initialisation and then override its print function. The Rhino shell is all static so this
-  // only need be done once.
-  if (!Main.getGlobal.isInitialized) {
-    Main.getGlobal.init(Main.shellContextFactory)
-    withContext {
-      Main.getGlobal.defineFunctionProperties(Array("print"), classOf[RhinoShell], ScriptableObject.DONTENUM)
-    }
-  }
+  import RhinoShell._
 
   // Each time we use Rhino we set properties in the global scope that represent the stdout and stderr
   // output streams. These output streams are plugged into our source actors.
@@ -196,4 +179,24 @@ private[jse] object RhinoShell {
     }
     Context.getUndefinedValue
   }
+
+  // A utility to safely manage Rhino contexts.
+  private def withContext(block: => Unit): Unit = {
+    Context.enter()
+    try block finally {
+      Context.exit()
+    }
+  }
+
+  // Initialise our Rhino environment. If we've never done so before then do general Rhino shell
+  // initialisation and then override its print function. The Rhino shell is all static so this
+  // only need be done once.
+  if (!Main.getGlobal.isInitialized) {
+    Main.getGlobal.init(Main.shellContextFactory)
+  }
+
+  withContext {
+    Main.getGlobal.defineFunctionProperties(Array("print"), classOf[RhinoShell], ScriptableObject.DONTENUM)
+  }
+
 }
