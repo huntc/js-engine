@@ -39,6 +39,7 @@ class BlockingProcess(args: immutable.Seq[String], receiver: ActorRef, detached:
       openStreams -= 1
       if (openStreams == 0 && !detached) {
         val exitValue = blocking {
+          p.waitFor()
           p.exitValue()
         }
         receiver ! exitValue
