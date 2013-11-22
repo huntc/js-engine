@@ -43,7 +43,7 @@ class Rhino extends Engine {
         immutable.Seq(source.getCanonicalPath) ++ args,
         stdoutOs, stdoutSource,
         stderrOs, stderrSource
-      ))
+      ), "rhino-shell")
   }
 
   def closeSafely(closable: Closeable): Unit = {
@@ -72,6 +72,7 @@ object Rhino {
    */
   def props(): Props = {
     Props(classOf[Rhino])
+      .withDispatcher("blocking-process-io-dispatcher")
   }
 
 }
@@ -106,7 +107,6 @@ private[jse] class RhinoShell(
     "-modules", moduleBase.getCanonicalPath
   )
   lb ++= args
-
 
   val exitCode = blocking {
     try {
@@ -148,6 +148,7 @@ private[jse] object RhinoShell {
              stderrOs: OutputStream, stderrSource: ActorRef
              ): Props = {
     Props(classOf[RhinoShell], moduleBase, args, stdoutOs, stdoutSource, stderrOs, stderrSource)
+      .withDispatcher("rhino-shell-dispatcher")
   }
 
   private val lineSeparator = System.getProperty("line.separator").getBytes("UTF-8")

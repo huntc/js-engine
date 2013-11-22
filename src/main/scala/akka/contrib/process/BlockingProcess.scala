@@ -70,6 +70,7 @@ object BlockingProcess {
              receiver: ActorRef,
              detached: Boolean = false
              ): Props = Props(classOf[BlockingProcess], args, receiver, detached)
+                          .withDispatcher("blocking-process-io-dispatcher")
 
   /**
    * Sent on startup to the receiver - specifies the actors used for managing input, output and
@@ -118,6 +119,7 @@ class Sink(os: OutputStream) extends Actor {
 
 object Sink {
   def props(os: OutputStream): Props = Props(classOf[Sink], os)
+    .withDispatcher("blocking-process-io-dispatcher")
 }
 
 /**
@@ -153,4 +155,5 @@ class Source(is: InputStream, receiver: ActorRef, pipeSize: Int) extends Actor {
 
 object Source {
   def props(is: InputStream, receiver: ActorRef, pipeSize: Int = 1024): Props = Props(classOf[Source], is, receiver, pipeSize)
+    .withDispatcher("blocking-process-io-dispatcher")
 }
