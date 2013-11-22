@@ -1,16 +1,17 @@
 package com.typesafe.jse
 
 import akka.actor._
-import org.mozilla.javascript.tools.shell.Main
 import scala.collection.mutable.ListBuffer
-import org.mozilla.javascript._
 import scala.concurrent.blocking
 import java.io._
 import akka.contrib.process.StreamEvents.Ack
 import akka.contrib.process.Source
 import scala.collection.immutable
+import org.mozilla.javascript._
 import com.typesafe.jse.Engine.ExecuteJs
 import akka.actor.Terminated
+import com.typesafe.jse.RhinoShell.Main
+import java.net.URLClassLoader
 
 /**
  * Declares an in-JVM Rhino based JavaScript engine. The actor is expected to be
@@ -82,6 +83,7 @@ object Rhino {
  * and sending its parent the exit code when it can see that the stdio sources have closed.
  */
 private[jse] class RhinoShell(
+                               shell: Main,
                                moduleBase: File,
                                args: immutable.Seq[String],
                                stdoutOs: OutputStream, stdoutSource: ActorRef,
@@ -92,11 +94,13 @@ private[jse] class RhinoShell(
 
   // Each time we use Rhino we set properties in the global scope that represent the stdout and stderr
   // output streams. These output streams are plugged into our source actors.
+
   withContext {
-    def jsStdoutOs = Context.javaToJS(stdoutOs, Main.getGlobal)
-    ScriptableObject.putProperty(Main.getGlobal, "stdout", jsStdoutOs)
-    def jsStderrOs = Context.javaToJS(stderrOs, Main.getGlobal)
-    ScriptableObject.putProperty(Main.getGlobal, "stderr", jsStderrOs)
+    val shellGlobal = shell.getGlobal.underlying
+    def jsStdoutOs = Context.javaToJS(stdoutOs, shellGlobal)
+    ScriptableObject.putProperty(shellGlobal, "stdout", jsStdoutOs)
+    def jsStderrOs = Context.javaToJS(stderrOs, shellGlobal)
+    ScriptableObject.putProperty(shellGlobal, "stderr", jsStderrOs)
   }
 
   // Formulate arguments to the Rhino shell.
@@ -113,7 +117,7 @@ private[jse] class RhinoShell(
       if (log.isDebugEnabled) {
         log.debug("Invoking Rhino with {}", lb.toString())
       }
-      Main.exec(lb.toArray)
+      shell.exec(lb.toArray)
     } finally {
       stdoutOs.close()
       stderrOs.close()
@@ -141,13 +145,14 @@ private[jse] class RhinoShell(
 }
 
 private[jse] object RhinoShell {
+
   def props(
              moduleBase: File,
              args: immutable.Seq[String],
              stdoutOs: OutputStream, stdoutSource: ActorRef,
              stderrOs: OutputStream, stderrSource: ActorRef
              ): Props = {
-    Props(classOf[RhinoShell], moduleBase, args, stdoutOs, stdoutSource, stderrOs, stderrSource)
+    Props(classOf[RhinoShell], shell, moduleBase, args, stdoutOs, stdoutSource, stderrOs, stderrSource)
   }
 
   private val lineSeparator = System.getProperty("line.separator").getBytes("UTF-8")
@@ -191,12 +196,50 @@ private[jse] object RhinoShell {
   // Initialise our Rhino environment. If we've never done so before then do general Rhino shell
   // initialisation and then override its print function. The Rhino shell is all static so this
   // only need be done once.
-  if (!Main.getGlobal.isInitialized) {
-    Main.getGlobal.init(Main.shellContextFactory)
+  // Note that we have to do all of this reflectively within a new class loader per Rhino shell.
+  // The Rhino shell is not re-entrant hence requiring its own classloader.
+
+  private def shell: Main = classOf[RhinoShell].getClassLoader match {
+    case currentClassLoader: URLClassLoader =>
+      val shellClassLoader = new URLClassLoader(currentClassLoader.getURLs, null)
+      val globalClass = shellClassLoader.loadClass("org.mozilla.javascript.tools.shell.Global")
+      val shellClass = shellClassLoader.loadClass("org.mozilla.javascript.tools.shell.Main")
+      val shell = new Main(shellClass, globalClass)
+      val shellGlobal = shell.getGlobal
+      if (!shellGlobal.isInitialized) {
+        shellGlobal.init(shell.shellContextFactory)
+      }
+      withContext {
+        shellGlobal.defineFunctionProperties(Array("print"), classOf[RhinoShell], ScriptableObject.DONTENUM)
+      }
+      shell
+    case _ => throw new IllegalStateException("A URLClassLoader is required for the RhinoShell actor")
   }
 
-  withContext {
-    Main.getGlobal.defineFunctionProperties(Array("print"), classOf[RhinoShell], ScriptableObject.DONTENUM)
+  // Proxies to the Rhino shell classes that we wish to isolate in their own classloader given that they
+  // are not re-entrant.
+
+  private class Global(globalClass: Class[_], val underlying: ImporterTopLevel) extends ImporterTopLevel {
+
+    private val initMethod = globalClass.getMethod("init", classOf[ContextFactory])
+    private val isInitializedMethod = globalClass.getMethod("isInitialized")
+
+    def init(contextFactory: ContextFactory): Unit = initMethod.invoke(underlying, contextFactory)
+
+    def isInitialized: Boolean = isInitializedMethod.invoke(underlying).asInstanceOf[Boolean]
+  }
+
+  private class Main(mainClass: Class[_], globalClass: Class[_]) {
+
+    private val execMethod = mainClass.getMethod("exec", classOf[Array[java.lang.String]])
+    private val getGlobalMethod = mainClass.getMethod("getGlobal")
+    private val shellContextFactoryField = mainClass.getField("shellContextFactory")
+
+    def exec(args: Array[String]): Int = execMethod.invoke(null, args).asInstanceOf[Int]
+
+    def getGlobal: Global = new Global(globalClass, getGlobalMethod.invoke(null).asInstanceOf[ImporterTopLevel])
+
+    def shellContextFactory: ContextFactory = shellContextFactoryField.get(null).asInstanceOf[ContextFactory]
   }
 
 }
