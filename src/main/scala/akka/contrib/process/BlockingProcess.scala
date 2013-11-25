@@ -63,14 +63,16 @@ object BlockingProcess {
    * @param args The sequence of string arguments to pass to the process.
    * @param receiver The actor to receive output and error events.
    * @param detached Whether the process will be daemonic.
+   * @param ioDispatcherId The name given to the dispatcher configuration that will be used to manage blocking IO.
    * @return a props object that can be used to create the process actor.
    */
   def props(
              args: immutable.Seq[String],
              receiver: ActorRef,
-             detached: Boolean = false
+             detached: Boolean = false,
+             ioDispatcherId: String = "blocking-process-io-dispatcher"
              ): Props = Props(classOf[BlockingProcess], args, receiver, detached)
-                          .withDispatcher("blocking-process-io-dispatcher")
+    .withDispatcher(ioDispatcherId)
 
   /**
    * Sent on startup to the receiver - specifies the actors used for managing input, output and
@@ -118,8 +120,11 @@ class Sink(os: OutputStream) extends Actor {
 }
 
 object Sink {
-  def props(os: OutputStream): Props = Props(classOf[Sink], os)
-    .withDispatcher("blocking-process-io-dispatcher")
+  def props(
+             os: OutputStream,
+             ioDispatcherId: String = "blocking-process-io-dispatcher"
+             ): Props = Props(classOf[Sink], os)
+    .withDispatcher(ioDispatcherId)
 }
 
 /**
@@ -154,6 +159,11 @@ class Source(is: InputStream, receiver: ActorRef, pipeSize: Int) extends Actor {
 }
 
 object Source {
-  def props(is: InputStream, receiver: ActorRef, pipeSize: Int = 1024): Props = Props(classOf[Source], is, receiver, pipeSize)
-    .withDispatcher("blocking-process-io-dispatcher")
+  def props(
+             is: InputStream,
+             receiver: ActorRef,
+             pipeSize: Int = 1024,
+             ioDispatcherId: String = "blocking-process-io-dispatcher"
+             ): Props = Props(classOf[Source], is, receiver, pipeSize)
+    .withDispatcher(ioDispatcherId)
 }

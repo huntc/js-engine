@@ -17,7 +17,7 @@ import akka.actor.Terminated
  * associated with a blocking dispatcher as calls to Rhino and its use of Jdk streams
  * are blocking.
  */
-class Rhino extends Engine {
+class Rhino(rhinoShellDispatcherId: String, ioDispatcherId: String) extends Engine {
 
   // The main objective of this actor implementation is to establish actors for both the execution of
   // Rhino code (Rhino's execution is blocking), and actors for the source of stdio (which is also blocking).
@@ -33,8 +33,8 @@ class Rhino extends Engine {
     case ExecuteJs(source, args, timeout, timeoutExitValue) =>
       val requester = sender
 
-      val stdoutSource = context.actorOf(Source.props(stdoutIs, self))
-      val stderrSource = context.actorOf(Source.props(stderrIs, self))
+      val stdoutSource = context.actorOf(Source.props(stdoutIs, self, ioDispatcherId = ioDispatcherId))
+      val stderrSource = context.actorOf(Source.props(stderrIs, self, ioDispatcherId = ioDispatcherId))
 
       new EngineIOHandler(stdoutSource, stderrSource, requester, Ack, timeout, timeoutExitValue)
 
@@ -42,7 +42,8 @@ class Rhino extends Engine {
         source.getParentFile.getCanonicalFile,
         immutable.Seq(source.getCanonicalPath) ++ args,
         stdoutOs, stdoutSource,
-        stderrOs, stderrSource
+        stderrOs, stderrSource,
+        rhinoShellDispatcherId = rhinoShellDispatcherId
       ), "rhino-shell")
   }
 
@@ -70,9 +71,12 @@ object Rhino {
   /**
    * Give me a Rhino props.
    */
-  def props(): Props = {
-    Props(classOf[Rhino])
-      .withDispatcher("blocking-process-io-dispatcher")
+  def props(
+             rhinoShellDispatcherId: String = "rhino-shell-dispatcher",
+             ioDispatcherId: String = "blocking-process-io-dispatcher"
+             ): Props = {
+    Props(classOf[Rhino], rhinoShellDispatcherId, ioDispatcherId)
+      .withDispatcher(ioDispatcherId)
   }
 
 }
@@ -145,10 +149,11 @@ private[jse] object RhinoShell {
              moduleBase: File,
              args: immutable.Seq[String],
              stdoutOs: OutputStream, stdoutSource: ActorRef,
-             stderrOs: OutputStream, stderrSource: ActorRef
+             stderrOs: OutputStream, stderrSource: ActorRef,
+             rhinoShellDispatcherId: String = "rhino-shell-dispatcher"
              ): Props = {
     Props(classOf[RhinoShell], moduleBase, args, stdoutOs, stdoutSource, stderrOs, stderrSource)
-      .withDispatcher("rhino-shell-dispatcher")
+      .withDispatcher(rhinoShellDispatcherId)
   }
 
   private val lineSeparator = System.getProperty("line.separator").getBytes("UTF-8")
