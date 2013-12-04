@@ -7,7 +7,7 @@ import org.mozilla.javascript._
 import scala.concurrent.blocking
 import java.io._
 import akka.contrib.process.StreamEvents.Ack
-import akka.contrib.process.Source
+import akka.contrib.process.{Sink, Source}
 import scala.collection.immutable
 import com.typesafe.jse.Engine.ExecuteJs
 import akka.actor.Terminated
@@ -23,6 +23,7 @@ class Rhino(rhinoShellDispatcherId: String, ioDispatcherId: String) extends Engi
   // Rhino code (Rhino's execution is blocking), and actors for the source of stdio (which is also blocking).
   // This actor is then a conduit of the IO as a result of execution.
 
+  val stdinOs = new ByteArrayOutputStream()
   val stdoutOs = new PipedOutputStream()
   val stderrOs = new PipedOutputStream()
 
@@ -33,14 +34,16 @@ class Rhino(rhinoShellDispatcherId: String, ioDispatcherId: String) extends Engi
     case ExecuteJs(source, args, timeout, timeoutExitValue) =>
       val requester = sender
 
-      val stdoutSource = context.actorOf(Source.props(stdoutIs, self, ioDispatcherId = ioDispatcherId))
-      val stderrSource = context.actorOf(Source.props(stderrIs, self, ioDispatcherId = ioDispatcherId))
+      val stdinSink = context.actorOf(Sink.props(stdinOs, ioDispatcherId = ioDispatcherId), "stdin")
+      val stdoutSource = context.actorOf(Source.props(stdoutIs, self, ioDispatcherId = ioDispatcherId), "stdout")
+      val stderrSource = context.actorOf(Source.props(stderrIs, self, ioDispatcherId = ioDispatcherId), "stderr")
 
-      new EngineIOHandler(stdoutSource, stderrSource, requester, Ack, timeout, timeoutExitValue)
+      new EngineIOHandler(stdinSink, stdoutSource, stderrSource, requester, Ack, timeout, timeoutExitValue)
 
       context.actorOf(RhinoShell.props(
         source.getParentFile.getCanonicalFile,
         immutable.Seq(source.getCanonicalPath) ++ args,
+        stdinOs, stdinSink,
         stdoutOs, stdoutSource,
         stderrOs, stderrSource,
         rhinoShellDispatcherId = rhinoShellDispatcherId
@@ -89,6 +92,7 @@ object Rhino {
 private[jse] class RhinoShell(
                                moduleBase: File,
                                args: immutable.Seq[String],
+                               stdinOs: OutputStream, stdinSink: ActorRef,
                                stdoutOs: OutputStream, stdoutSource: ActorRef,
                                stderrOs: OutputStream, stderrSource: ActorRef
                                ) extends Actor with ActorLogging {
@@ -119,6 +123,7 @@ private[jse] class RhinoShell(
       }
       Main.exec(lb.toArray)
     } finally {
+      stdinOs.close()
       stdoutOs.close()
       stderrOs.close()
     }
@@ -148,11 +153,12 @@ private[jse] object RhinoShell {
   def props(
              moduleBase: File,
              args: immutable.Seq[String],
+             stdinOs: OutputStream, stdinSink: ActorRef,
              stdoutOs: OutputStream, stdoutSource: ActorRef,
              stderrOs: OutputStream, stderrSource: ActorRef,
              rhinoShellDispatcherId: String = "rhino-shell-dispatcher"
              ): Props = {
-    Props(classOf[RhinoShell], moduleBase, args, stdoutOs, stdoutSource, stderrOs, stderrSource)
+    Props(classOf[RhinoShell], moduleBase, args, stdinOs, stdinSink, stdoutOs, stdoutSource, stderrOs, stderrSource)
       .withDispatcher(rhinoShellDispatcherId)
   }
 

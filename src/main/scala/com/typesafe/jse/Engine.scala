@@ -1,6 +1,6 @@
 package com.typesafe.jse
 
-import akka.actor.{ActorRef, Actor}
+import akka.actor.{Terminated, ActorRef, Actor}
 import scala.concurrent.duration._
 import scala.concurrent.duration.FiniteDuration
 import akka.contrib.pattern.Aggregator
@@ -20,6 +20,7 @@ abstract class Engine extends Actor with Aggregator {
   * only ever sent after all stdio has completed.
   */
   class EngineIOHandler(
+                         stdinSource: ActorRef,
                          stdoutSource: ActorRef,
                          stderrSource: ActorRef,
                          receiver: ActorRef,
@@ -31,19 +32,44 @@ abstract class Engine extends Actor with Aggregator {
     val errorBuilder = ByteString.newBuilder
     val outputBuilder = ByteString.newBuilder
 
+    context.watch(stdinSource)
     context.system.scheduler.scheduleOnce(timeout, self, timeoutExitValue)(context.dispatcher)
 
     val processActivity: Actor.Receive = expect {
-      case bytes: ByteString =>
-        sender match {
-          case `stderrSource` => errorBuilder ++= bytes
-          case `stdoutSource` => outputBuilder ++= bytes
-        }
-        sender ! ack
+      case bytes: ByteString => handleStdioBytes(sender, bytes)
       case exitValue: Int =>
-        unexpect(processActivity)
-        receiver ! JsExecutionResult(exitValue, outputBuilder.result(), errorBuilder.result())
-        context.stop(self)
+        sendExecutionResult(exitValue)
+        if (exitValue != timeoutExitValue) {
+          expect {
+            case Terminated(`stdinSource`) => shutdown()
+          }
+        } else {
+          shutdown()
+        }
+      case Terminated(`stdinSource`) =>
+        expect {
+          case bytes: ByteString => handleStdioBytes(sender, bytes)
+          case exitValue: Int =>
+            sendExecutionResult(exitValue)
+            shutdown()
+        }
+    }
+
+    def handleStdioBytes(sender: ActorRef, bytes: ByteString): Unit = {
+      sender match {
+        case `stderrSource` => errorBuilder ++= bytes
+        case `stdoutSource` => outputBuilder ++= bytes
+      }
+      sender ! ack
+    }
+
+    def sendExecutionResult(exitValue: Int): Unit = {
+      receiver ! JsExecutionResult(exitValue, outputBuilder.result(), errorBuilder.result())
+    }
+
+    def shutdown(): Unit = {
+      unexpect(processActivity)
+      context.stop(self)
     }
   }
 

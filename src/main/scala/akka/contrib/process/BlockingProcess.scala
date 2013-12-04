@@ -28,9 +28,9 @@ class BlockingProcess(args: immutable.Seq[String], receiver: ActorRef, detached:
   val pb = new JdkProcessBuilder(args.asJava)
   val p = pb.start()
 
-  val stdinSink = context.actorOf(Sink.props(p.getOutputStream))
-  val stdoutSource = context.watch(context.actorOf(Source.props(p.getInputStream, receiver)))
-  val stderrSource = context.watch(context.actorOf(Source.props(p.getErrorStream, receiver)))
+  val stdinSink = context.actorOf(Sink.props(p.getOutputStream), "stdin")
+  val stdoutSource = context.watch(context.actorOf(Source.props(p.getInputStream, receiver), "stdout"))
+  val stderrSource = context.watch(context.actorOf(Source.props(p.getErrorStream, receiver), "stderr"))
 
   var openStreams = 2
 
