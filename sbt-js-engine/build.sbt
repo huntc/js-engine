@@ -8,11 +8,19 @@ version := "1.0.0-SNAPSHOT"
 
 scalaVersion := "2.10.3"
 
+resolvers ++= Seq(
+    Resolver.url("sbt snapshot plugins", url("http://repo.scala-sbt.org/scalasbt/sbt-plugin-snapshots"))(Resolver.ivyStylePatterns),
+    Resolver.sonatypeRepo("snapshots"),
+    "Typesafe Snapshots Repository" at "http://repo.typesafe.com/typesafe/snapshots/"
+    )
+
 libraryDependencies ++= Seq(
   "com.typesafe" %% "jse" % "1.0.0-SNAPSHOT"
 )
 
 addSbtPlugin("com.typesafe" % "sbt-web" % "1.0.0-SNAPSHOT")
+
+publishMavenStyle := false
 
 publishTo := {
     val isSnapshot = version.value.contains("-SNAPSHOT")
