@@ -22,10 +22,11 @@ import akka.contrib.process.StreamEvents.{Done, Ack}
  * The actor is expected to be associated with a blocking dispatcher as various calls are made
  * to input and output streams which can block.
  */
-class BlockingProcess(args: immutable.Seq[String], receiver: ActorRef, detached: Boolean)
+class BlockingProcess(args: immutable.Seq[String], environment: Map[String, String], receiver: ActorRef, detached: Boolean)
   extends Actor {
 
   val pb = new JdkProcessBuilder(args.asJava)
+  pb.environment().putAll(environment.asJava)
   val p = pb.start()
 
   val stdinSink = context.actorOf(Sink.props(p.getOutputStream), "stdin")
@@ -68,10 +69,11 @@ object BlockingProcess {
    */
   def props(
              args: immutable.Seq[String],
+             environment: Map[String, String],
              receiver: ActorRef,
              detached: Boolean = false,
              ioDispatcherId: String = "blocking-process-io-dispatcher"
-             ): Props = Props(classOf[BlockingProcess], args, receiver, detached)
+             ): Props = Props(classOf[BlockingProcess], args, environment, receiver, detached)
     .withDispatcher(ioDispatcherId)
 
   /**

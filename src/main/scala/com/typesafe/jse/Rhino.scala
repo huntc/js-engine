@@ -31,7 +31,7 @@ class Rhino(rhinoShellDispatcherId: String, ioDispatcherId: String) extends Engi
   val stderrIs = new PipedInputStream(stderrOs)
 
   expectOnce {
-    case ExecuteJs(source, args, timeout, timeoutExitValue) =>
+    case ExecuteJs(source, args, timeout, timeoutExitValue, modulePaths) =>
       val requester = sender
 
       val stdinSink = context.actorOf(Sink.props(stdinOs, ioDispatcherId = ioDispatcherId), "stdin")
@@ -43,6 +43,7 @@ class Rhino(rhinoShellDispatcherId: String, ioDispatcherId: String) extends Engi
       context.actorOf(RhinoShell.props(
         source.getParentFile.getCanonicalFile,
         immutable.Seq(source.getCanonicalPath) ++ args,
+        modulePaths,
         stdinOs, stdinSink,
         stdoutOs, stdoutSource,
         stderrOs, stderrSource,
@@ -92,6 +93,7 @@ object Rhino {
 private[jse] class RhinoShell(
                                moduleBase: File,
                                args: immutable.Seq[String],
+                               modulePaths: immutable.Seq[String],
                                stdinOs: OutputStream, stdinSink: ActorRef,
                                stdoutOs: OutputStream, stdoutSource: ActorRef,
                                stderrOs: OutputStream, stderrSource: ActorRef
@@ -114,6 +116,7 @@ private[jse] class RhinoShell(
     "-opt", "-1",
     "-modules", moduleBase.getCanonicalPath
   )
+  lb ++= modulePaths.flatMap(Seq("-modules", _))
   lb ++= args
 
   val exitCode = blocking {
@@ -153,12 +156,13 @@ private[jse] object RhinoShell {
   def props(
              moduleBase: File,
              args: immutable.Seq[String],
+             modulePaths: immutable.Seq[String],
              stdinOs: OutputStream, stdinSink: ActorRef,
              stdoutOs: OutputStream, stdoutSource: ActorRef,
              stderrOs: OutputStream, stderrSource: ActorRef,
              rhinoShellDispatcherId: String = "rhino-shell-dispatcher"
              ): Props = {
-    Props(classOf[RhinoShell], moduleBase, args, stdinOs, stdinSink, stdoutOs, stdoutSource, stderrOs, stderrSource)
+    Props(classOf[RhinoShell], moduleBase, args, modulePaths, stdinOs, stdinSink, stdoutOs, stdoutSource, stderrOs, stderrSource)
       .withDispatcher(rhinoShellDispatcherId)
   }
 
