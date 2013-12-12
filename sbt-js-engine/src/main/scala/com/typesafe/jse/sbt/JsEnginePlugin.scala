@@ -19,7 +19,7 @@ object JsEnginePlugin extends sbt.Plugin {
 
   import JsEngineKeys._
 
-  override val globalSettings: Seq[Setting[_]] = Seq(
+  def jsEngineSettings: Seq[Setting[_]] = Seq(
     engineType := EngineType.Rhino,
     parallelism := java.lang.Runtime.getRuntime.availableProcessors() + 1
   )
