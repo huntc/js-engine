@@ -83,12 +83,14 @@ object Engine {
    * @param args The sequence of arguments to pass to the js source.
    * @param timeout The amount of time to wait for the js to execute.
    * @param timeoutExitValue The exit value to receive if the above timeout occurs.
+   * @param modulePaths A list of paths for the engine to search on
    */
   case class ExecuteJs(
                         source: java.io.File,
                         args: immutable.Seq[String],
                         timeout: FiniteDuration = 10.seconds,
-                        timeoutExitValue: Int = -1
+                        timeoutExitValue: Int = -1,
+                        modulePaths: immutable.Seq[String] = Nil
                         )
 
   /**
