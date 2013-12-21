@@ -2,16 +2,16 @@ JavaScript Engine
 =================
 
 The JavaScript Engine library (jse) provides an [Actor](http://en.wikipedia.org/wiki/Actor_model) based abstraction so that JavaScript code can be 
-executed in a browser-less fashion. In-jvm support is provided in the form of [Rhino](https://developer.mozilla.org/en/docs/Rhino)
-and native JavaScript performance is provided by using
+executed in a browser-less fashion. In-jvm support is provided in the form of [Ringo](http://ringojs.org/) and
+[Rhino](https://developer.mozilla.org/en/docs/Rhino). Native JavaScript performance is provided by using
 [Common Node](http://olegp.github.io/common-node/),
 [node.js](http://nodejs.org/) and
-[PhantomJS](http://phantomjs.org/) (these latter 3 are required to be installed separately).
+[PhantomJS](http://phantomjs.org/) (these are required to be installed).
 
 Sample usage can be obtained by inspecting the js-engine-tester sub-project. There's a main class that
 illustrates essential interactions. Here is a snippet of it:
 
-    val engine = system.actorOf(Node.props(), "engine")
+    val engine = system.actorOf(Ringo.props(), "engine")
     val f = new File(Main.getClass.getResource("test.js").toURI)
     for (
       result <- (engine ? Engine.ExecuteJs(f, Seq("999"))).mapTo[JsExecutionResult]

@@ -10,7 +10,7 @@ object JsEnginePlugin extends sbt.Plugin {
   object JsEngineKeys {
 
     object EngineType extends Enumeration {
-      val CommonNode, Node, PhantomJs, Rhino = Value
+      val CommonNode, Node, PhantomJs, Rhino, Ringo = Value
     }
 
     val engineType = SettingKey[EngineType.Value]("jse-type", "The type of engine to use.")
@@ -20,7 +20,7 @@ object JsEnginePlugin extends sbt.Plugin {
   import JsEngineKeys._
 
   def jsEngineSettings: Seq[Setting[_]] = Seq(
-    engineType := EngineType.Rhino,
+    engineType := EngineType.Ringo,
     parallelism := java.lang.Runtime.getRuntime.availableProcessors() + 1
   )
 

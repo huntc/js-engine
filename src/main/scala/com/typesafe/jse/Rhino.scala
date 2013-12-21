@@ -10,7 +10,6 @@ import akka.contrib.process.StreamEvents.Ack
 import akka.contrib.process.{Sink, Source}
 import scala.collection.immutable
 import com.typesafe.jse.Engine.ExecuteJs
-import akka.actor.Terminated
 
 /**
  * Declares an in-JVM Rhino based JavaScript engine. The actor is expected to be
@@ -23,32 +22,49 @@ class Rhino(rhinoShellDispatcherId: String, ioDispatcherId: String) extends Engi
   // Rhino code (Rhino's execution is blocking), and actors for the source of stdio (which is also blocking).
   // This actor is then a conduit of the IO as a result of execution.
 
-  val stdinOs = new ByteArrayOutputStream()
   val stdoutOs = new PipedOutputStream()
   val stderrOs = new PipedOutputStream()
 
   val stdoutIs = new PipedInputStream(stdoutOs)
   val stderrIs = new PipedInputStream(stderrOs)
 
-  expectOnce {
+  def receive = {
     case ExecuteJs(source, args, timeout, timeoutExitValue, modulePaths) =>
       val requester = sender
 
-      val stdinSink = context.actorOf(Sink.props(stdinOs, ioDispatcherId = ioDispatcherId), "stdin")
-      val stdoutSource = context.actorOf(Source.props(stdoutIs, self, ioDispatcherId = ioDispatcherId), "stdout")
-      val stderrSource = context.actorOf(Source.props(stderrIs, self, ioDispatcherId = ioDispatcherId), "stderr")
+      // Create an input stream and close it immediately as it isn't going to be used.
+      val stdinOs = new PipedOutputStream()
+      val stdinIs = new PipedInputStream(stdinOs)
 
-      new EngineIOHandler(stdinSink, stdoutSource, stderrSource, requester, Ack, timeout, timeoutExitValue)
+      try {
+        val stdinSink = context.actorOf(Sink.props(stdinOs, ioDispatcherId = ioDispatcherId), "stdin")
+        val stdoutSource = context.actorOf(Source.props(stdoutIs, self, ioDispatcherId = ioDispatcherId), "stdout")
+        val stderrSource = context.actorOf(Source.props(stderrIs, self, ioDispatcherId = ioDispatcherId), "stderr")
 
-      context.actorOf(RhinoShell.props(
-        source.getParentFile.getCanonicalFile,
-        immutable.Seq(source.getCanonicalPath) ++ args,
-        modulePaths,
-        stdinOs, stdinSink,
-        stdoutOs, stdoutSource,
-        stderrOs, stderrSource,
-        rhinoShellDispatcherId = rhinoShellDispatcherId
-      ), "rhino-shell")
+        context.become(engineIOHandler(
+          stdinSink, stdoutSource, stderrSource,
+          requester,
+          Ack,
+          timeout, timeoutExitValue
+        ))
+
+        context.actorOf(RhinoShell.props(
+          source,
+          args,
+          modulePaths,
+          stdinIs, new PrintStream(stdoutOs), new PrintStream(stderrOs),
+          rhinoShellDispatcherId
+        ), "rhino-shell") ! RhinoShell.Execute
+
+        // We don't need an input stream so close it out straight away.
+        stdinSink ! PoisonPill
+
+      } finally {
+        blocking {
+          closeSafely(stdinIs)
+          closeSafely(stdinOs)
+        }
+      }
   }
 
   def closeSafely(closable: Closeable): Unit = {
@@ -91,63 +107,51 @@ object Rhino {
  * and sending its parent the exit code when it can see that the stdio sources have closed.
  */
 private[jse] class RhinoShell(
-                               moduleBase: File,
+                               source: File,
                                args: immutable.Seq[String],
                                modulePaths: immutable.Seq[String],
-                               stdinOs: OutputStream, stdinSink: ActorRef,
-                               stdoutOs: OutputStream, stdoutSource: ActorRef,
-                               stderrOs: OutputStream, stderrSource: ActorRef
+                               stdinIs: InputStream,
+                               stdoutOs: PrintStream,
+                               stderrOs: PrintStream
                                ) extends Actor with ActorLogging {
 
   import RhinoShell._
-
-  // Each time we use Rhino we set properties in the global scope that represent the stdout and stderr
-  // output streams. These output streams are plugged into our source actors.
-  withContext {
-    def jsStdoutOs = Context.javaToJS(stdoutOs, Main.getGlobal)
-    ScriptableObject.putProperty(Main.getGlobal, "stdout", jsStdoutOs)
-    def jsStderrOs = Context.javaToJS(stderrOs, Main.getGlobal)
-    ScriptableObject.putProperty(Main.getGlobal, "stderr", jsStderrOs)
-  }
 
   // Formulate arguments to the Rhino shell.
   val lb = ListBuffer[String]()
   lb ++= Seq(
     "-opt", "-1",
-    "-modules", moduleBase.getCanonicalPath
+    "-modules", source.getParent
   )
   lb ++= modulePaths.flatMap(Seq("-modules", _))
+  lb += source.getCanonicalPath
   lb ++= args
 
-  val exitCode = blocking {
-    try {
-      if (log.isDebugEnabled) {
-        log.debug("Invoking Rhino with {}", lb.toString())
-      }
-      Main.exec(lb.toArray)
-    } finally {
-      stdinOs.close()
-      stdoutOs.close()
-      stderrOs.close()
-    }
-  }
-
-  // When all streams are closed then we signal that Rhino has exited. This is entirely satisfactory in
-  // a Rhino shell situation given that we are in control of the stdout and stderr. Our contract to the
-  // outside world (EngineIOHandler) is that the exit status is always sent after stdout and stderr as
-  // per the akka.contrib.process package.
-
-  context.watch(stdoutSource)
-  context.watch(stderrSource)
-
-  var openStreams = 2
+  val shellArgs = lb.toArray
 
   def receive = {
-    case Terminated(`stdoutSource` | `stderrSource`) =>
-      openStreams -= 1
-      if (openStreams == 0) {
-        context.parent ! exitCode
+    case Execute =>
+      // Each time we use Rhino we set properties in the global scope that represent the stdout and stderr
+      // output streams. These output streams are plugged into our source actors.
+      withContext {
+        def jsStdoutOs = Context.javaToJS(stdoutOs, Main.getGlobal)
+        ScriptableObject.putProperty(Main.getGlobal, "stdout", jsStdoutOs)
+        def jsStderrOs = Context.javaToJS(stderrOs, Main.getGlobal)
+        ScriptableObject.putProperty(Main.getGlobal, "stderr", jsStderrOs)
       }
+      val exitCode = blocking {
+        try {
+          if (log.isDebugEnabled) {
+            log.debug("Invoking Rhino with {}", shellArgs)
+          }
+          Main.exec(shellArgs)
+        } finally {
+          stdoutOs.close()
+          stderrOs.close()
+        }
+      }
+
+      sender ! exitCode
   }
 
 }
@@ -157,14 +161,16 @@ private[jse] object RhinoShell {
              moduleBase: File,
              args: immutable.Seq[String],
              modulePaths: immutable.Seq[String],
-             stdinOs: OutputStream, stdinSink: ActorRef,
-             stdoutOs: OutputStream, stdoutSource: ActorRef,
-             stderrOs: OutputStream, stderrSource: ActorRef,
-             rhinoShellDispatcherId: String = "rhino-shell-dispatcher"
+             stdinIs: InputStream,
+             stdoutOs: PrintStream,
+             stderrOs: PrintStream,
+             rhinoShellDispatcherId: String
              ): Props = {
-    Props(classOf[RhinoShell], moduleBase, args, modulePaths, stdinOs, stdinSink, stdoutOs, stdoutSource, stderrOs, stderrSource)
+    Props(classOf[RhinoShell], moduleBase, args, modulePaths, stdinIs, stdoutOs, stderrOs)
       .withDispatcher(rhinoShellDispatcherId)
   }
+
+  case object Execute
 
   private val lineSeparator = System.getProperty("line.separator").getBytes("UTF-8")
 

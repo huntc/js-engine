@@ -1,9 +1,17 @@
-var log;
+var print;
 try {
-    log = require("console").log;
+    print = require("system").print;
 } catch (e) {
-    log = print;
 }
 
-log("Hi there");
-log("and again!");
+var error;
+try {
+    error = require("console").error;
+} catch (e) {
+    error = print;
+}
+
+print("Hi there");
+print("and again!");
+
+error("Some error.");
