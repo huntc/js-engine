@@ -12,6 +12,7 @@ libraryDependencies ++= Seq(
   "com.typesafe.akka" %% "akka-actor" % "2.2.3",
   "com.typesafe.akka" %% "akka-contrib" % "2.2.3",
   "org.mozilla" % "rhino" % "1.7R5-SNAPSHOT",
+  "org.ringojs" % "ringojs" % "0.10.1-SNAPSHOT",
   "io.spray" %% "spray-json" % "1.2.5",
   "jline" % "jline" % "1.0",
   "org.specs2" %% "specs2" % "2.2.2" % "test",
