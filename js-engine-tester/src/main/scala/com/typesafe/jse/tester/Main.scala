@@ -26,7 +26,8 @@ object Main {
     for (
       result <- (engine ? Engine.ExecuteJs(f, immutable.Seq("999"))).mapTo[JsExecutionResult]
     ) yield {
-      println(new String(result.output.toArray, "UTF-8"))
+      println(s"output\n======\n${new String(result.output.toArray, "UTF-8")}\n")
+      println(s"error\n=====\n${new String(result.error.toArray, "UTF-8")}\n")
 
       try {
         system.shutdown()

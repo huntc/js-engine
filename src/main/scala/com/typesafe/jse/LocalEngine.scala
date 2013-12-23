@@ -15,7 +15,7 @@ import akka.contrib.process.StreamEvents.Ack
  */
 class LocalEngine(stdArgs: Seq[String]) extends Engine {
 
-  expectOnce {
+  def receive = {
     case ExecuteJs(f, args, timeout, timeoutExitValue, modulePaths) =>
       val requester = sender
       val lb = ListBuffer[String]()
@@ -23,9 +23,9 @@ class LocalEngine(stdArgs: Seq[String]) extends Engine {
       lb += f.getCanonicalPath
       lb ++= args
       context.actorOf(BlockingProcess.props(lb.to[immutable.Seq], Map.empty, self), "process")
-      expectOnce {
+      context.become {
         case Started(i, o, e) =>
-          new EngineIOHandler(i, o, e, requester, Ack, timeout, timeoutExitValue)
+          context.become(engineIOHandler(i, o, e, requester, Ack, timeout, timeoutExitValue))
           i ! PoisonPill // We don't need an input stream so close it out straight away.
       }
   }
@@ -38,16 +38,16 @@ class LocalEngine(stdArgs: Seq[String]) extends Engine {
  */
 class NodeEngine(stdArgs: immutable.Seq[String]) extends Engine {
 
-  expectOnce {
+  def receive = {
     case ExecuteJs(f, args, timeout, timeoutExitValue, modulePaths) =>
       val requester = sender
       val nodePath = modulePaths.mkString(":")
       val newNodePath = Option(System.getenv("NODE_PATH")).map(_ + ":" + nodePath).getOrElse(nodePath)
       val env = if (newNodePath.isEmpty) Map.empty[String, String] else Map("NODE_PATH" -> newNodePath)
       context.actorOf(BlockingProcess.props((stdArgs :+ f.getCanonicalPath) ++ args, env, self), "process")
-      expectOnce {
+      context.become {
         case Started(i, o, e) =>
-          new EngineIOHandler(i, o, e, requester, Ack, timeout, timeoutExitValue)
+          context.become(engineIOHandler(i, o, e, requester, Ack, timeout, timeoutExitValue))
           i ! PoisonPill // We don't need an input stream so close it out straight away.
       }
   }

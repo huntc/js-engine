@@ -3,7 +3,6 @@ package com.typesafe.jse
 import akka.actor.{Terminated, ActorRef, Actor}
 import scala.concurrent.duration._
 import scala.concurrent.duration.FiniteDuration
-import akka.contrib.pattern.Aggregator
 import akka.util.ByteString
 import scala.collection.immutable
 import com.typesafe.jse.Engine.JsExecutionResult
@@ -12,48 +11,25 @@ import com.typesafe.jse.Engine.JsExecutionResult
  * A JavaScript engine. JavaScript engines are intended to be short-lived and will terminate themselves on
  * completion of executing some JavaScript.
  */
-abstract class Engine extends Actor with Aggregator {
+abstract class Engine extends Actor {
 
   /*
-  * An EngineIOHandler aggregates stdout and stderr from JavaScript execution.
+  * An engineIOHandler is a receiver that aggregates stdout and stderr from JavaScript execution.
   * Execution may also be timed out. The contract is that an exit value is always
   * only ever sent after all stdio has completed.
   */
-  class EngineIOHandler(
-                         stdinSource: ActorRef,
-                         stdoutSource: ActorRef,
-                         stderrSource: ActorRef,
-                         receiver: ActorRef,
-                         ack: => Any,
-                         timeout: FiniteDuration,
-                         timeoutExitValue: Int
-                         ) {
+  def engineIOHandler(
+                       stdinSink: ActorRef,
+                       stdoutSource: ActorRef,
+                       stderrSource: ActorRef,
+                       receiver: ActorRef,
+                       ack: => Any,
+                       timeout: FiniteDuration,
+                       timeoutExitValue: Int
+                       ): Receive = {
 
     val errorBuilder = ByteString.newBuilder
     val outputBuilder = ByteString.newBuilder
-
-    context.watch(stdinSource)
-    context.system.scheduler.scheduleOnce(timeout, self, timeoutExitValue)(context.dispatcher)
-
-    val processActivity: Actor.Receive = expect {
-      case bytes: ByteString => handleStdioBytes(sender, bytes)
-      case exitValue: Int =>
-        sendExecutionResult(exitValue)
-        if (exitValue != timeoutExitValue) {
-          expect {
-            case Terminated(`stdinSource`) => shutdown()
-          }
-        } else {
-          shutdown()
-        }
-      case Terminated(`stdinSource`) =>
-        expect {
-          case bytes: ByteString => handleStdioBytes(sender, bytes)
-          case exitValue: Int =>
-            sendExecutionResult(exitValue)
-            shutdown()
-        }
-    }
 
     def handleStdioBytes(sender: ActorRef, bytes: ByteString): Unit = {
       sender match {
@@ -67,9 +43,40 @@ abstract class Engine extends Actor with Aggregator {
       receiver ! JsExecutionResult(exitValue, outputBuilder.result(), errorBuilder.result())
     }
 
-    def shutdown(): Unit = {
-      unexpect(processActivity)
-      context.stop(self)
+    context.watch(stdinSink)
+    context.watch(stdoutSource)
+    context.watch(stderrSource)
+
+    context.system.scheduler.scheduleOnce(timeout, self, timeoutExitValue)(context.dispatcher)
+
+    var openStreams = 3
+
+    {
+      case bytes: ByteString => handleStdioBytes(sender, bytes)
+      case exitValue: Int =>
+        if (exitValue != timeoutExitValue) {
+          context.become {
+            case bytes: ByteString => handleStdioBytes(sender, bytes)
+            case Terminated(`stdinSink` | `stdoutSource` | `stderrSource`) => {
+              openStreams -= 1
+              if (openStreams == 0) {
+                sendExecutionResult(exitValue)
+                context.stop(self)
+              }
+            }
+          }
+        } else {
+          context.stop(self)
+        }
+      case Terminated(`stdinSink` | `stdoutSource` | `stderrSource`) =>
+        openStreams -= 1
+        if (openStreams == 0) {
+          context.become {
+            case exitValue: Int =>
+              sendExecutionResult(exitValue)
+              context.stop(self)
+          }
+        }
     }
   }
 
