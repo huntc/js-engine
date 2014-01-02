@@ -3,7 +3,7 @@ package com.typesafe.jse.tester
 import akka.actor.ActorSystem
 import akka.pattern.ask
 
-import com.typesafe.jse.{Rhino, CommonNode, Engine}
+import com.typesafe.jse.{Trireme, Rhino, CommonNode, Engine}
 import akka.util.Timeout
 import scala.concurrent.duration._
 import scala.concurrent.ExecutionContext.Implicits.global
@@ -21,7 +21,7 @@ object Main {
       System.exit(1)
     }
 
-    val engine = system.actorOf(Rhino.props(), "engine")
+    val engine = system.actorOf(Trireme.props(), "engine")
     val f = new File(Main.getClass.getResource("test.js").toURI)
     for (
       result <- (engine ? Engine.ExecuteJs(f, immutable.Seq("999"))).mapTo[JsExecutionResult]

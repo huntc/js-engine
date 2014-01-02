@@ -10,7 +10,7 @@ object JsEnginePlugin extends sbt.Plugin {
   object JsEngineKeys {
 
     object EngineType extends Enumeration {
-      val CommonNode, Node, PhantomJs, Rhino = Value
+      val CommonNode, Node, PhantomJs, Rhino, Trireme = Value
     }
 
     val engineType = SettingKey[EngineType.Value]("jse-type", "The type of engine to use.")

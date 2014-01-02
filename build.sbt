@@ -6,20 +6,19 @@ version := "1.0.0-SNAPSHOT"
 
 scalaVersion := "2.10.3"
 
-resolvers ++= Seq(
-  "spray nightlies repo" at "http://nightlies.spray.io",
-  "spray repo" at "http://repo.spray.io/"
-  )
-
 libraryDependencies ++= Seq(
   "com.typesafe.akka" %% "akka-actor" % "2.2.3",
   "com.typesafe.akka" %% "akka-contrib" % "2.2.3",
   "org.mozilla" % "rhino" % "1.7R4",
+  "io.apigee.trireme" % "trireme-core" % "0.6.9-SNAPSHOT",
   "io.spray" %% "spray-json" % "1.2.5",
+  "org.slf4j" % "slf4j-simple" % "1.7.5",
   "org.specs2" %% "specs2" % "2.2.2" % "test",
   "junit" % "junit" % "4.11" % "test",
   "com.typesafe.akka" %% "akka-testkit" % "2.2.3" % "test"
 )
+
+resolvers += Resolver.sonatypeRepo("snapshots")
 
 publishTo := {
     val isSnapshot = version.value.contains("-SNAPSHOT")

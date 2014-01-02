@@ -52,7 +52,7 @@ class Rhino(rhinoShellDispatcherId: String, ioDispatcherId: String) extends Engi
           source,
           args,
           modulePaths,
-          stdinIs, new PrintStream(stdoutOs), new PrintStream(stderrOs),
+          stdinIs, stdoutOs, stderrOs,
           rhinoShellDispatcherId
         ), "rhino-shell") ! RhinoShell.Execute
 
@@ -111,8 +111,8 @@ private[jse] class RhinoShell(
                                args: immutable.Seq[String],
                                modulePaths: immutable.Seq[String],
                                stdinIs: InputStream,
-                               stdoutOs: PrintStream,
-                               stderrOs: PrintStream
+                               stdoutOs: OutputStream,
+                               stderrOs: OutputStream
                                ) extends Actor with ActorLogging {
 
   import RhinoShell._
@@ -162,8 +162,8 @@ private[jse] object RhinoShell {
              args: immutable.Seq[String],
              modulePaths: immutable.Seq[String],
              stdinIs: InputStream,
-             stdoutOs: PrintStream,
-             stderrOs: PrintStream,
+             stdoutOs: OutputStream,
+             stderrOs: OutputStream,
              rhinoShellDispatcherId: String
              ): Props = {
     Props(classOf[RhinoShell], moduleBase, args, modulePaths, stdinIs, stdoutOs, stderrOs)

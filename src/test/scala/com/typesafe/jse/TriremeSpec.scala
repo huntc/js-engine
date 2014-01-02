@@ -13,13 +13,13 @@ import akka.actor.ActorSystem
 import scala.concurrent.Await
 
 @RunWith(classOf[JUnitRunner])
-class RhinoSpec extends Specification with NoTimeConversions {
+class TriremeSpec extends Specification with NoTimeConversions {
 
-  "The Rhino engine" should {
+  "The Trireme engine" should {
     "execute some javascript by passing in a string arg and comparing its return value" in {
       val system = ActorSystem()
-      val engine = system.actorOf(Rhino.props())
-      val f = new File(classOf[RhinoSpec].getResource("test-rhino.js").toURI)
+      val engine = system.actorOf(Trireme.props())
+      val f = new File(classOf[TriremeSpec].getResource("test-node.js").toURI)
       implicit val timeout = Timeout(5000L)
 
       val futureResult = (engine ? Engine.ExecuteJs(f, immutable.Seq("999"))).mapTo[JsExecutionResult]
