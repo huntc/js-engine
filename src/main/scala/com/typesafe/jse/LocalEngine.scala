@@ -13,7 +13,7 @@ import akka.contrib.process.StreamEvents.Ack
  * communicated with by launching with arguments and returning a status code.
  * @param stdArgs a sequence of standard command line arguments used to launch the engine from the command line.
  */
-class LocalEngine(stdArgs: Seq[String]) extends Engine {
+class LocalEngine(stdArgs: immutable.Seq[String]) extends Engine {
 
   def receive = {
     case ExecuteJs(f, args, timeout, timeoutExitValue, modulePaths) =>
@@ -38,18 +38,28 @@ class LocalEngine(stdArgs: Seq[String]) extends Engine {
  */
 class NodeEngine(stdArgs: immutable.Seq[String]) extends Engine {
 
+  import NodeEngine._
+
   def receive = {
     case ExecuteJs(f, args, timeout, timeoutExitValue, modulePaths) =>
       val requester = sender
-      val nodePath = modulePaths.mkString(":")
-      val newNodePath = Option(System.getenv("NODE_PATH")).map(_ + ":" + nodePath).getOrElse(nodePath)
-      val env = if (newNodePath.isEmpty) Map.empty[String, String] else Map("NODE_PATH" -> newNodePath)
-      context.actorOf(BlockingProcess.props((stdArgs :+ f.getCanonicalPath) ++ args, env, self), "process")
+
+      context.actorOf(BlockingProcess.props((stdArgs :+ f.getCanonicalPath) ++ args, nodePathEnv(modulePaths), self), "process")
       context.become {
         case Started(i, o, e) =>
           context.become(engineIOHandler(i, o, e, requester, Ack, timeout, timeoutExitValue))
           i ! PoisonPill // We don't need an input stream so close it out straight away.
       }
+  }
+}
+
+object NodeEngine {
+  val nodePathDelim = if (System.getProperty("os.name").toLowerCase.contains("win")) ";" else ":"
+
+  def nodePathEnv(modulePaths: immutable.Seq[String]): Map[String, String] = {
+    val nodePath = modulePaths.mkString(nodePathDelim)
+    val newNodePath = Option(System.getenv("NODE_PATH")).map(_ + nodePathDelim + nodePath).getOrElse(nodePath)
+    if (newNodePath.isEmpty) Map.empty[String, String] else Map("NODE_PATH" -> newNodePath)
   }
 }
 
