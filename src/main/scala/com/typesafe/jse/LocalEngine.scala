@@ -18,11 +18,12 @@ class LocalEngine(stdArgs: immutable.Seq[String]) extends Engine {
   def receive = {
     case ExecuteJs(f, args, timeout, timeoutExitValue, modulePaths) =>
       val requester = sender
-      val lb = ListBuffer[String]()
-      lb ++= stdArgs
-      lb += f.getCanonicalPath
-      lb ++= args
-      context.actorOf(BlockingProcess.props(lb.to[immutable.Seq], Map.empty, self), "process")
+
+      context.actorOf(BlockingProcess.props(
+        (stdArgs :+ f.getCanonicalPath) ++ args,
+        Map.empty, self),
+        "process"
+      )
       context.become {
         case Started(i, o, e) =>
           context.become(engineIOHandler(i, o, e, requester, Ack, timeout, timeoutExitValue))
@@ -35,8 +36,9 @@ class LocalEngine(stdArgs: immutable.Seq[String]) extends Engine {
  * Provides an Actor on behalf of a Node JavaScript Engine. Engines are represented as operating system processes and are
  * communicated with by launching with arguments and returning a status code.
  * @param stdArgs a sequence of standard command line arguments used to launch the engine from the command line.
+ * @param stdModulePaths a sequence of standard module paths.
  */
-class NodeEngine(stdArgs: immutable.Seq[String]) extends Engine {
+class NodeEngine(stdArgs: immutable.Seq[String], stdModulePaths: immutable.Seq[String]) extends Engine {
 
   import NodeEngine._
 
@@ -44,7 +46,11 @@ class NodeEngine(stdArgs: immutable.Seq[String]) extends Engine {
     case ExecuteJs(f, args, timeout, timeoutExitValue, modulePaths) =>
       val requester = sender
 
-      context.actorOf(BlockingProcess.props((stdArgs :+ f.getCanonicalPath) ++ args, nodePathEnv(modulePaths), self), "process")
+      context.actorOf(BlockingProcess.props(
+        (stdArgs :+ f.getCanonicalPath) ++ args,
+        nodePathEnv(stdModulePaths ++ modulePaths), self),
+        "process"
+      )
       context.become {
         case Started(i, o, e) =>
           context.become(engineIOHandler(i, o, e, requester, Ack, timeout, timeoutExitValue))
@@ -67,9 +73,9 @@ object NodeEngine {
  * Used to manage a local instance of Node.js with CommonJs support. common-node is assumed to be on the path.
  */
 object CommonNode {
-  def props(): Props = {
-    val args = immutable.Seq("common-node")
-    Props(classOf[NodeEngine], args)
+  def props(stdArgs: immutable.Seq[String] = Nil, stdModulePaths: immutable.Seq[String] = Nil): Props = {
+    val args = immutable.Seq("common-node") ++ stdArgs
+    Props(classOf[NodeEngine], args, stdModulePaths)
   }
 }
 
@@ -77,9 +83,9 @@ object CommonNode {
  * Used to manage a local instance of Node.js. Node is assumed to be on the path.
  */
 object Node {
-  def props(): Props = {
-    val args = immutable.Seq("node")
-    Props(classOf[NodeEngine], args)
+  def props(stdArgs: immutable.Seq[String] = Nil, stdModulePaths: immutable.Seq[String] = Nil): Props = {
+    val args = immutable.Seq("node") ++ stdArgs
+    Props(classOf[NodeEngine], args, stdModulePaths)
   }
 }
 
@@ -87,8 +93,8 @@ object Node {
  * Used to manage a local instance of PhantomJS. PhantomJS is assumed to be on the path.
  */
 object PhantomJs {
-  def props(): Props = {
-    val args = Seq("phantomjs")
+  def props(stdArgs: immutable.Seq[String] = Nil): Props = {
+    val args = Seq("phantomjs") ++ stdArgs
     Props(classOf[LocalEngine], args)
   }
 }

@@ -20,7 +20,7 @@ object JsEnginePlugin extends sbt.Plugin {
   import JsEngineKeys._
 
   def jsEngineSettings: Seq[Setting[_]] = Seq(
-    engineType := EngineType.Rhino,
+    engineType := EngineType.Trireme,
     parallelism := java.lang.Runtime.getRuntime.availableProcessors() + 1
   )
 
