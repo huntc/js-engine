@@ -16,7 +16,11 @@ import java.nio.charset.Charset
  * The <a href="https://github.com/apigee/trireme#trireme">Trireme</a> project provides this capability.
  * The actor is expected to be associated with a blocking dispatcher as its use of Jdk streams are blocking.
  */
-class Trireme(ioDispatcherId: String) extends Engine {
+class Trireme(
+               stdArgs: immutable.Seq[String],
+               stdModulePaths: immutable.Seq[String],
+               ioDispatcherId: String
+               ) extends Engine {
 
   // The main objective of this actor implementation is to establish actors for both the execution of
   // Trireme code (Trireme's execution is blocking), and actors for the source of stdio (which is also blocking).
@@ -50,8 +54,8 @@ class Trireme(ioDispatcherId: String) extends Engine {
 
         context.actorOf(TriremeShell.props(
           source,
-          args,
-          modulePaths,
+          stdArgs ++ args,
+          stdModulePaths ++ modulePaths,
           stdinIs, stdoutOs, stderrOs
         ), "trireme-shell") ! TriremeShell.Execute
 
@@ -91,8 +95,12 @@ object Trireme {
   /**
    * Give me a Trireme props.
    */
-  def props(ioDispatcherId: String = "blocking-process-io-dispatcher"): Props = {
-    Props(classOf[Trireme], ioDispatcherId)
+  def props(
+             stdArgs: immutable.Seq[String] = Nil,
+             stdModulePaths: immutable.Seq[String] = Nil,
+             ioDispatcherId: String = "blocking-process-io-dispatcher"
+             ): Props = {
+    Props(classOf[Trireme], stdArgs, stdModulePaths, ioDispatcherId)
       .withDispatcher(ioDispatcherId)
   }
 
