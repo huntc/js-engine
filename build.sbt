@@ -2,7 +2,7 @@ organization := "com.typesafe"
 
 name := "jse"
 
-version := "1.0.0-SNAPSHOT"
+version := "1.0.0-M1"
 
 scalaVersion := "2.10.3"
 
@@ -10,7 +10,7 @@ libraryDependencies ++= Seq(
   "com.typesafe.akka" %% "akka-actor" % "2.2.3",
   "com.typesafe.akka" %% "akka-contrib" % "2.2.3",
   "org.mozilla" % "rhino" % "1.7R4",
-  "io.apigee.trireme" % "trireme-core" % "0.6.9-SNAPSHOT",
+  "io.apigee.trireme" % "trireme-core" % "0.6.9",
   "io.spray" %% "spray-json" % "1.2.5",
   "org.slf4j" % "slf4j-simple" % "1.7.5",
   "org.specs2" %% "specs2" % "2.2.2" % "test",
