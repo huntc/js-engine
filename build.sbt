@@ -2,7 +2,7 @@ organization := "com.typesafe"
 
 name := "jse"
 
-version := "1.0.0-M1"
+version := "1.0.0-SNAPSHOT"
 
 scalaVersion := "2.10.3"
 
