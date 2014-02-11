@@ -1,6 +1,6 @@
 sbtPlugin := true
 
-organization := "com.typesafe"
+organization := "com.typesafe.sbt"
 
 name := "sbt-js-engine"
 
@@ -18,7 +18,7 @@ libraryDependencies ++= Seq(
   "com.typesafe" %% "jse" % "1.0.0-M1"
 )
 
-addSbtPlugin("com.typesafe" % "sbt-web" % "1.0.0-M1")
+addSbtPlugin("com.typesafe.sbt" % "sbt-web" % "1.0.0-SNAPSHOT")
 
 publishMavenStyle := false
 

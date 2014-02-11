@@ -1,11 +1,11 @@
-package com.typesafe.jse.sbt
+package com.typesafe.sbt.jse
 
 import sbt._
 
 /**
  * Declares the main parts of a WebDriver based plugin for sbt.
  */
-object JsEnginePlugin extends sbt.Plugin {
+object SbtJsEnginePlugin extends sbt.Plugin {
 
   object JsEngineKeys {
 
