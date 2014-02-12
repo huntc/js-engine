@@ -95,7 +95,7 @@ object Engine {
   case class ExecuteJs(
                         source: java.io.File,
                         args: immutable.Seq[String],
-                        timeout: FiniteDuration = 10.seconds,
+                        timeout: FiniteDuration,
                         timeoutExitValue: Int = -1,
                         modulePaths: immutable.Seq[String] = Nil
                         )

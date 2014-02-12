@@ -22,7 +22,7 @@ class TriremeSpec extends Specification with NoTimeConversions {
       val f = new File(classOf[TriremeSpec].getResource("test-node.js").toURI)
       implicit val timeout = Timeout(5000L)
 
-      val futureResult = (engine ? Engine.ExecuteJs(f, immutable.Seq("999"))).mapTo[JsExecutionResult]
+      val futureResult = (engine ? Engine.ExecuteJs(f, immutable.Seq("999"), timeout.duration)).mapTo[JsExecutionResult]
       val result = Await.result(futureResult, timeout.duration)
       new String(result.output.toArray, "UTF-8").trim must_== "999"
 

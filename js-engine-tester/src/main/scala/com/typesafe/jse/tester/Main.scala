@@ -24,7 +24,7 @@ object Main {
     val engine = system.actorOf(Trireme.props(), "engine")
     val f = new File(Main.getClass.getResource("test.js").toURI)
     for (
-      result <- (engine ? Engine.ExecuteJs(f, immutable.Seq("999"))).mapTo[JsExecutionResult]
+      result <- (engine ? Engine.ExecuteJs(f, immutable.Seq("999"), timeout.duration)).mapTo[JsExecutionResult]
     ) yield {
       println(s"output\n======\n${new String(result.output.toArray, "UTF-8")}\n")
       println(s"error\n=====\n${new String(result.error.toArray, "UTF-8")}\n")
