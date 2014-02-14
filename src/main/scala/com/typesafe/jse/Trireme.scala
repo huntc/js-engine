@@ -126,7 +126,7 @@ private[jse] class TriremeShell(
   val sourcePath = source.getCanonicalPath
   val userModulePaths = immutable.Seq(moduleBase.getCanonicalPath) ++ modulePaths
 
-  val env = NodeEngine.nodePathEnv(userModulePaths)
+  val env = (sys.env ++ NodeEngine.nodePathEnv(userModulePaths)).asJava
   val nodeEnv = new NodeEnvironment()
   val sandbox = new Sandbox()
   sandbox.setStdin(stdinIs)
@@ -142,7 +142,7 @@ private[jse] class TriremeShell(
 
       val script = nodeEnv.createScript(source.getName, source, args.toArray)
       script.setSandbox(sandbox)
-      script.setEnvironment(env.asJava)
+      script.setEnvironment(env)
 
       val senderSel = sender.path
       val senderSys = context.system
