@@ -1,0 +1,3 @@
+# Pretend to compile something in our plugin and ensure that its error message is output.
+-> compile
+> check

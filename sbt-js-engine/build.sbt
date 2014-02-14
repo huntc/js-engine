@@ -22,6 +22,10 @@ libraryDependencies ++= Seq(
 
 addSbtPlugin("com.typesafe.sbt" % "sbt-web" % "1.0.0-SNAPSHOT")
 
+scriptedSettings
+
+scriptedLaunchOpts <+= version apply { v => s"-Dproject.version=$v" }
+
 publishMavenStyle := false
 
 publishTo := {
