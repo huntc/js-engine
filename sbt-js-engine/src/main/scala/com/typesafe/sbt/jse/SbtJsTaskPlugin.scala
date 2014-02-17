@@ -4,13 +4,11 @@ import sbt._
 import sbt.Keys._
 import com.typesafe.sbt.web.incremental.OpInputHasher
 import spray.json._
-import com.typesafe.sbt.web.incremental.OpSuccess
-import com.typesafe.sbt.web.LineBasedProblem
+import com.typesafe.sbt.web._
 import xsbti.{Problem, Severity}
 import com.typesafe.sbt.web.incremental.OpResult
 import com.typesafe.sbt.web.incremental.OpFailure
 import com.typesafe.sbt.jse.SbtJsEnginePlugin.JsEngineKeys
-import com.typesafe.sbt.web.SbtWebPlugin
 import com.typesafe.sbt.web.incremental.OpInputHash
 import akka.actor.ActorRef
 import akka.util.Timeout
@@ -18,11 +16,13 @@ import scala.concurrent.{Await, ExecutionContext, Future}
 import scala.collection.immutable
 import com.typesafe.jse._
 import com.typesafe.jse.Node
-import com.typesafe.sbt.web.incremental
 import com.typesafe.sbt.web.SbtWebPlugin._
-import com.typesafe.jse.Engine.JsExecutionResult
-import com.typesafe.sbt.web.CompileProblems
 import akka.pattern.ask
+import com.typesafe.sbt.web.incremental
+import sbt.Task
+import com.typesafe.jse.Engine.JsExecutionResult
+import com.typesafe.sbt.web.incremental.OpSuccess
+import sbt.Configuration
 
 
 /**
@@ -32,10 +32,10 @@ object SbtJsTaskPlugin {
 
   object JsTaskKeys {
 
-    val jsTasks = SettingKey[Seq[Task[Int]]]("jstasks", "The list of JavaScript tasks to perform.")
+    val jsTasks = SettingKey[Seq[Task[Seq[Problem]]]]("jstasks", "The list of JavaScript tasks to perform.")
     val fileInputHasher = TaskKey[OpInputHasher[File]]("jstask-file-input-hasher", "A function that computes constitues a change for a given file.")
     val shellSource = SettingKey[File]("jstask-shell-source", "The target location of the js shell script to use.")
-    val runJsTasks = TaskKey[Int]("jstask-run-all", "Run all um tasks")
+    val runJsTasks = TaskKey[Seq[Problem]]("jstask-run-all", "Run all um tasks")
   }
 
   /**
@@ -111,11 +111,15 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
   import SbtJsTaskPlugin._
   import SbtJsTaskPlugin.JsTaskKeys._
 
-  private def firstNoneZero(values: Seq[Int]): Int = values find (_ != 0) getOrElse 0
-
   def jsTaskUnscopedSettings = Seq(
     jsTasks := Nil,
-    runJsTasks := firstNoneZero(jsTasks(_.join).value: Seq[Int])
+    runJsTasks := {
+      val problems: Seq[Problem] = jsTasks(_.join).value.foldLeft(Seq[Problem]())((p0: Seq[Problem], p1: Seq[Problem]) => p0 ++ p1)
+      if (problems.exists(_.severity() == Severity.Error)) {
+        throw new CompileProblemsException(problems.toArray)
+      }
+      problems
+    }
   )
 
   def jsTaskSettings = inConfig(Assets)(jsTaskUnscopedSettings) ++ inConfig(TestAssets)(jsTaskUnscopedSettings) ++
@@ -179,7 +183,7 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
               jsOptions: TaskKey[String],
               fileInputHasher: TaskKey[OpInputHasher[java.io.File]],
               opDesc: String
-              ): Def.Initialize[Task[Int]] = Def.task {
+              ): Def.Initialize[Task[Seq[Problem]]] = Def.task {
 
     import scala.concurrent.duration._
     val timeoutPerSource = 30.seconds
@@ -193,6 +197,8 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
     }
 
     val sources = ((unmanagedSources in config).value ** fileFilter.value).get
+
+    reporter.value.reset()
 
     implicit val opInputHasher = fileInputHasher.value
     val problems: Seq[Problem] = incremental.runIncremental(streams.value.cacheDirectory, sources) {
@@ -214,7 +220,13 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
                     arf =>
                       val engine = arf.actorOf(engineProps)
                       implicit val timeout = Timeout(timeoutPerSource * sourceBatch.size)
-                      executeJs(engine, shellSource.value, sourceBatch, jsOptions.value)
+                      val futureProblemResults = executeJs(engine, shellSource.value, sourceBatch, jsOptions.value)
+                      import ExecutionContext.Implicits.global
+                      futureProblemResults.onSuccess {
+                        case problemResults =>
+                          problemResults._2.foreach(p => reporter.value.log(p.position(), p.message(), p.severity()))
+                      }
+                      futureProblemResults
                   }
               }
             }
@@ -232,8 +244,8 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
         }
     }
 
-    CompileProblems.report(reporter.value, problems)
+    reporter.value.printSummary()
 
-    if (problems.isEmpty) 0 else 1
+    problems
   }
 }
