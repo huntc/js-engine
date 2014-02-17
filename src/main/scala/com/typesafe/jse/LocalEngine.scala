@@ -1,7 +1,6 @@
 package com.typesafe.jse
 
 import akka.actor._
-import scala.collection.mutable.ListBuffer
 import com.typesafe.jse.Engine.ExecuteJs
 import akka.contrib.process.BlockingProcess
 import akka.contrib.process.BlockingProcess.Started
@@ -12,8 +11,9 @@ import akka.contrib.process.StreamEvents.Ack
  * Provides an Actor on behalf of a JavaScript Engine. Engines are represented as operating system processes and are
  * communicated with by launching with arguments and returning a status code.
  * @param stdArgs a sequence of standard command line arguments used to launch the engine from the command line.
+ * @param stdModulePaths a sequence of standard module paths.
  */
-class LocalEngine(stdArgs: immutable.Seq[String]) extends Engine {
+class LocalEngine(stdArgs: immutable.Seq[String], stdModulePaths: immutable.Seq[String]) extends Engine {
 
   def receive = {
     case ExecuteJs(f, args, timeout, timeoutExitValue, modulePaths) =>
@@ -21,7 +21,7 @@ class LocalEngine(stdArgs: immutable.Seq[String]) extends Engine {
 
       context.actorOf(BlockingProcess.props(
         (stdArgs :+ f.getCanonicalPath) ++ args,
-        Map.empty, self),
+        modulePathsToEnv(stdModulePaths ++ modulePaths), self),
         "process"
       )
       context.become {
@@ -30,6 +30,8 @@ class LocalEngine(stdArgs: immutable.Seq[String]) extends Engine {
           i ! PoisonPill // We don't need an input stream so close it out straight away.
       }
   }
+
+  protected def modulePathsToEnv(modulePaths: immutable.Seq[String]): Map[String, String] = Map.empty
 }
 
 /**
@@ -38,25 +40,12 @@ class LocalEngine(stdArgs: immutable.Seq[String]) extends Engine {
  * @param stdArgs a sequence of standard command line arguments used to launch the engine from the command line.
  * @param stdModulePaths a sequence of standard module paths.
  */
-class NodeEngine(stdArgs: immutable.Seq[String], stdModulePaths: immutable.Seq[String]) extends Engine {
+class NodeEngine(stdArgs: immutable.Seq[String], stdModulePaths: immutable.Seq[String])
+  extends LocalEngine(stdArgs, stdModulePaths) {
 
   import NodeEngine._
 
-  def receive = {
-    case ExecuteJs(f, args, timeout, timeoutExitValue, modulePaths) =>
-      val requester = sender
-
-      context.actorOf(BlockingProcess.props(
-        (stdArgs :+ f.getCanonicalPath) ++ args,
-        nodePathEnv(stdModulePaths ++ modulePaths), self),
-        "process"
-      )
-      context.become {
-        case Started(i, o, e) =>
-          context.become(engineIOHandler(i, o, e, requester, Ack, timeout, timeoutExitValue))
-          i ! PoisonPill // We don't need an input stream so close it out straight away.
-      }
-  }
+  override def modulePathsToEnv(modulePaths: immutable.Seq[String]): Map[String, String] = nodePathEnv(modulePaths)
 }
 
 object NodeEngine {
@@ -95,6 +84,6 @@ object Node {
 object PhantomJs {
   def props(stdArgs: immutable.Seq[String] = Nil): Props = {
     val args = Seq("phantomjs") ++ stdArgs
-    Props(classOf[LocalEngine], args)
+    Props(classOf[LocalEngine], args, Map[String, String]().empty)
   }
 }
