@@ -185,11 +185,11 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
     val timeoutPerSource = 30.seconds
 
     val engineProps = engineType.value match {
-      case EngineType.CommonNode => CommonNode.props()
-      case EngineType.Node => Node.props(stdModulePaths = immutable.Seq((nodeModules in Plugin).value.getCanonicalPath))
+      case EngineType.CommonNode => CommonNode.props(stdEnvironment = NodeEngine.nodePathEnv(immutable.Seq((nodeModules in Plugin).value.getCanonicalPath)))
+      case EngineType.Node => Node.props(stdEnvironment = NodeEngine.nodePathEnv(immutable.Seq((nodeModules in Plugin).value.getCanonicalPath)))
       case EngineType.PhantomJs => PhantomJs.props()
       case EngineType.Rhino => Rhino.props()
-      case EngineType.Trireme => Trireme.props(stdModulePaths = immutable.Seq((nodeModules in Plugin).value.getCanonicalPath))
+      case EngineType.Trireme => Trireme.props(stdEnvironment = NodeEngine.nodePathEnv(immutable.Seq((nodeModules in Plugin).value.getCanonicalPath)))
     }
 
     val sources = ((unmanagedSources in config).value ** fileFilter.value).get

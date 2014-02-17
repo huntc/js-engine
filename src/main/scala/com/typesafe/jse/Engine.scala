@@ -11,7 +11,7 @@ import com.typesafe.jse.Engine.JsExecutionResult
  * A JavaScript engine. JavaScript engines are intended to be short-lived and will terminate themselves on
  * completion of executing some JavaScript.
  */
-abstract class Engine extends Actor {
+abstract class Engine(stdArgs: immutable.Seq[String], stdEnvironment: Map[String, String]) extends Actor {
 
   /*
   * An engineIOHandler is a receiver that aggregates stdout and stderr from JavaScript execution.
@@ -90,14 +90,14 @@ object Engine {
    * @param args The sequence of arguments to pass to the js source.
    * @param timeout The amount of time to wait for the js to execute.
    * @param timeoutExitValue The exit value to receive if the above timeout occurs.
-   * @param modulePaths A list of paths for the engine to search on
+   * @param environment A mapping of environment variables to use.
    */
   case class ExecuteJs(
                         source: java.io.File,
                         args: immutable.Seq[String],
                         timeout: FiniteDuration,
                         timeoutExitValue: Int = -1,
-                        modulePaths: immutable.Seq[String] = Nil
+                        environment: Map[String, String] = Map.empty
                         )
 
   /**

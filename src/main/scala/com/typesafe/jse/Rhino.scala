@@ -16,7 +16,12 @@ import com.typesafe.jse.Engine.ExecuteJs
  * associated with a blocking dispatcher as calls to Rhino and its use of Jdk streams
  * are blocking.
  */
-class Rhino(rhinoShellDispatcherId: String, ioDispatcherId: String) extends Engine {
+class Rhino(
+             stdArgs: immutable.Seq[String],
+             stdModulePaths: immutable.Seq[String],
+             rhinoShellDispatcherId: String,
+             ioDispatcherId: String
+             ) extends Engine(stdArgs, Map.empty) {
 
   // The main objective of this actor implementation is to establish actors for both the execution of
   // Rhino code (Rhino's execution is blocking), and actors for the source of stdio (which is also blocking).
@@ -29,7 +34,7 @@ class Rhino(rhinoShellDispatcherId: String, ioDispatcherId: String) extends Engi
   val stderrIs = new PipedInputStream(stderrOs)
 
   def receive = {
-    case ExecuteJs(source, args, timeout, timeoutExitValue, modulePaths) =>
+    case ExecuteJs(source, args, timeout, timeoutExitValue, environment) =>
       val requester = sender
 
       // Create an input stream and close it immediately as it isn't going to be used.
@@ -50,8 +55,8 @@ class Rhino(rhinoShellDispatcherId: String, ioDispatcherId: String) extends Engi
 
         context.actorOf(RhinoShell.props(
           source,
-          args,
-          modulePaths,
+          stdArgs ++ args,
+          stdModulePaths,
           stdinIs, stdoutOs, stderrOs,
           rhinoShellDispatcherId
         ), "rhino-shell") ! RhinoShell.Execute
@@ -92,10 +97,12 @@ object Rhino {
    * Give me a Rhino props.
    */
   def props(
+             stdArgs: immutable.Seq[String] = Nil,
+             stdModulePaths: immutable.Seq[String] = Nil,
              rhinoShellDispatcherId: String = "rhino-shell-dispatcher",
              ioDispatcherId: String = "blocking-process-io-dispatcher"
              ): Props = {
-    Props(classOf[Rhino], rhinoShellDispatcherId, ioDispatcherId)
+    Props(classOf[Rhino], stdArgs, stdModulePaths, rhinoShellDispatcherId, ioDispatcherId)
       .withDispatcher(ioDispatcherId)
   }
 

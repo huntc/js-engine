@@ -9,7 +9,6 @@ import scala.collection.immutable
 import io.apigee.trireme.core._
 import scala.collection.JavaConverters._
 import com.typesafe.jse.Engine.ExecuteJs
-import java.nio.charset.Charset
 
 /**
  * Declares an in-JVM Rhino based JavaScript engine supporting the Node API.
@@ -18,9 +17,9 @@ import java.nio.charset.Charset
  */
 class Trireme(
                stdArgs: immutable.Seq[String],
-               stdModulePaths: immutable.Seq[String],
+               stdEnvironment: Map[String, String],
                ioDispatcherId: String
-               ) extends Engine {
+               ) extends Engine(stdArgs, stdEnvironment) {
 
   // The main objective of this actor implementation is to establish actors for both the execution of
   // Trireme code (Trireme's execution is blocking), and actors for the source of stdio (which is also blocking).
@@ -33,7 +32,7 @@ class Trireme(
   val stderrIs = new PipedInputStream(stderrOs)
 
   def receive = {
-    case ExecuteJs(source, args, timeout, timeoutExitValue, modulePaths) =>
+    case ExecuteJs(source, args, timeout, timeoutExitValue, environment) =>
       val requester = sender
 
       // Create an input stream and close it immediately as it isn't going to be used.
@@ -55,7 +54,7 @@ class Trireme(
         context.actorOf(TriremeShell.props(
           source,
           stdArgs ++ args,
-          stdModulePaths ++ modulePaths,
+          stdEnvironment ++ environment,
           stdinIs, stdoutOs, stderrOs
         ), "trireme-shell") ! TriremeShell.Execute
 
@@ -97,10 +96,10 @@ object Trireme {
    */
   def props(
              stdArgs: immutable.Seq[String] = Nil,
-             stdModulePaths: immutable.Seq[String] = Nil,
+             stdEnvironment: Map[String, String] = Map.empty,
              ioDispatcherId: String = "blocking-process-io-dispatcher"
              ): Props = {
-    Props(classOf[Trireme], stdArgs, stdModulePaths, ioDispatcherId)
+    Props(classOf[Trireme], stdArgs, stdEnvironment, ioDispatcherId)
       .withDispatcher(ioDispatcherId)
   }
 
@@ -114,7 +113,7 @@ object Trireme {
 private[jse] class TriremeShell(
                                  source: File,
                                  args: immutable.Seq[String],
-                                 modulePaths: immutable.Seq[String],
+                                 environment: Map[String, String],
                                  stdinIs: InputStream,
                                  stdoutOs: OutputStream,
                                  stderrOs: OutputStream
@@ -122,11 +121,9 @@ private[jse] class TriremeShell(
 
   import TriremeShell._
 
-  val moduleBase = source.getParentFile.getCanonicalFile
   val sourcePath = source.getCanonicalPath
-  val userModulePaths = immutable.Seq(moduleBase.getCanonicalPath) ++ modulePaths
 
-  val env = (sys.env ++ NodeEngine.nodePathEnv(userModulePaths)).asJava
+  val env = (sys.env ++ environment).asJava
   val nodeEnv = new NodeEnvironment()
   val sandbox = new Sandbox()
   sandbox.setStdin(stdinIs)
@@ -161,12 +158,12 @@ private[jse] object TriremeShell {
   def props(
              moduleBase: File,
              args: immutable.Seq[String],
-             modulePaths: immutable.Seq[String],
+             environment: Map[String, String],
              stdinIs: InputStream,
              stdoutOs: OutputStream,
              stderrOs: OutputStream
              ): Props = {
-    Props(classOf[TriremeShell], moduleBase, args, modulePaths, stdinIs, stdoutOs, stderrOs)
+    Props(classOf[TriremeShell], moduleBase, args, environment, stdinIs, stdoutOs, stderrOs)
   }
 
   case object Execute
