@@ -23,6 +23,7 @@ import com.typesafe.sbt.web.SbtWebPlugin._
 import com.typesafe.jse.Engine.JsExecutionResult
 import com.typesafe.sbt.web.CompileProblems
 import akka.pattern.ask
+import scala.concurrent.duration.FiniteDuration
 
 
 /**
@@ -36,6 +37,7 @@ object SbtJsTaskPlugin {
     val fileInputHasher = TaskKey[OpInputHasher[File]]("jstask-file-input-hasher", "A function that computes constitues a change for a given file.")
     val shellSource = TaskKey[File]("jstask-shell-source", "The target location of the js shell script to use.")
     val runJsTasks = TaskKey[Int]("jstask-run-all", "Run all um tasks")
+    val timeoutPerSource = SettingKey[FiniteDuration]("jstask-timeout-per-source", "The maximum number of seconds to wait per source file processed by the JS task.")
   }
 
   /**
@@ -118,6 +120,7 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
     runJsTasks := firstNoneZero(jsTasks(_.join).value: Seq[Int])
   )
 
+  import scala.concurrent.duration._
   def jsTaskSettings = inConfig(Assets)(jsTaskUnscopedSettings) ++ inConfig(TestAssets)(jsTaskUnscopedSettings) ++
     Seq(
       shellSource := {
@@ -129,7 +132,8 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
       },
       fileInputHasher := OpInputHasher[File](source => OpInputHash.hashString(source.getAbsolutePath)),
       compile in Compile <<= (compile in Compile).dependsOn(runJsTasks in Assets),
-      compile in Test <<= (compile in Test).dependsOn(runJsTasks in TestAssets)
+      compile in Test <<= (compile in Test).dependsOn(runJsTasks in TestAssets),
+      timeoutPerSource := 30.seconds
     )
 
   def executeJs(
@@ -183,9 +187,6 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
               opDesc: String
               ): Def.Initialize[Task[Int]] = Def.task {
 
-    import scala.concurrent.duration._
-    val timeoutPerSource = 30.seconds
-
     val engineProps = engineType.value match {
       case EngineType.CommonNode => CommonNode.props(stdEnvironment = NodeEngine.nodePathEnv(immutable.Seq((nodeModules in Plugin).value.getCanonicalPath)))
       case EngineType.Node => Node.props(stdEnvironment = NodeEngine.nodePathEnv(immutable.Seq((nodeModules in Plugin).value.getCanonicalPath)))
@@ -211,11 +212,11 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
               val sourceBatches = (modifiedJsSources grouped Math.max(modifiedJsSources.size / parallelism.value, 1)).toSeq
               sourceBatches.map {
                 sourceBatch =>
-                  implicit val timeout = Timeout(timeoutPerSource * sourceBatch.size)
+                  implicit val timeout = Timeout(timeoutPerSource.value * sourceBatch.size)
                   withActorRefFactory(state.value, this.getClass.getName) {
                     arf =>
                       val engine = arf.actorOf(engineProps)
-                      implicit val timeout = Timeout(timeoutPerSource * sourceBatch.size)
+                      implicit val timeout = Timeout(timeoutPerSource.value * sourceBatch.size)
                       executeJs(engine, shellSource.value, sourceBatch, jsOptions.value)
                   }
               }
@@ -223,7 +224,7 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
 
           import scala.concurrent.ExecutionContext.Implicits.global
           val pendingResults = Future.sequence(resultBatches)
-          val completedResults = Await.result(pendingResults, timeoutPerSource * modifiedJsSources.size)
+          val completedResults = Await.result(pendingResults, timeoutPerSource.value * modifiedJsSources.size)
           completedResults.foldLeft(Map[File, OpResult]() -> Seq[Problem]()) {
             (r1, r2) =>
               (r1._1 ++ r2._1) -> (r1._2 ++ r2._2)
