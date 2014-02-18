@@ -34,7 +34,7 @@ object SbtJsTaskPlugin {
 
     val jsTasks = SettingKey[Seq[Task[Int]]]("jstasks", "The list of JavaScript tasks to perform.")
     val fileInputHasher = TaskKey[OpInputHasher[File]]("jstask-file-input-hasher", "A function that computes constitues a change for a given file.")
-    val shellSource = SettingKey[File]("jstask-shell-source", "The target location of the js shell script to use.")
+    val shellSource = TaskKey[File]("jstask-shell-source", "The target location of the js shell script to use.")
     val runJsTasks = TaskKey[Int]("jstask-run-all", "Run all um tasks")
   }
 
@@ -156,7 +156,9 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
           throw new JsTaskFailure(new String(result.error.toArray, "UTF-8"))
         }
 
-        val p = JsonParser(new String(result.output.toArray, "UTF-8"))
+        val jsonBytes = result.output.dropWhile(_ != '\u0010').drop(1)
+        val json = new String(jsonBytes.toArray, "UTF-8")
+        val p = JsonParser(json)
         import JsTaskProtocol._
         val prp = p.convertTo[ProblemResultsPair]
         (prp.results.map(sr => sr.source -> sr.result).toMap, prp.problems)
