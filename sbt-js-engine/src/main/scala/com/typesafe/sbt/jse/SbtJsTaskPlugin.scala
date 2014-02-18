@@ -35,10 +35,34 @@ object SbtJsTaskPlugin {
 
     val jsTasks = SettingKey[Seq[Task[Int]]]("jstasks", "The list of JavaScript tasks to perform.")
     val fileInputHasher = TaskKey[OpInputHasher[File]]("jstask-file-input-hasher", "A function that computes constitues a change for a given file.")
+    val shellFile = SettingKey[String]("jstask-shell-file", "The name of the file to perform a given task.")
     val shellSource = TaskKey[File]("jstask-shell-source", "The target location of the js shell script to use.")
     val runJsTasks = TaskKey[Int]("jstask-run-all", "Run all um tasks")
     val timeoutPerSource = SettingKey[FiniteDuration]("jstask-timeout-per-source", "The maximum number of seconds to wait per source file processed by the JS task.")
   }
+
+  import WebKeys._
+  import JsTaskKeys._
+
+  private def firstNoneZero(values: Seq[Int]): Int = values find (_ != 0) getOrElse 0
+
+  def jsTaskUnscopedSettings = Seq(
+    jsTasks := Nil,
+    runJsTasks := firstNoneZero(jsTasks(_.join).value: Seq[Int])
+  )
+
+  import scala.concurrent.duration._
+  def jsTaskSettings =
+    inConfig(Assets)(jsTaskUnscopedSettings) ++
+      inConfig(TestAssets)(jsTaskUnscopedSettings) ++
+      Seq(
+        fileInputHasher := OpInputHasher[File](source => OpInputHash.hashString(source.getAbsolutePath)),
+        timeoutPerSource := 30.seconds,
+        compile in Compile <<= (compile in Compile).dependsOn(runJsTasks in Assets),
+        compile in Test <<= (compile in Test).dependsOn(runJsTasks in TestAssets)
+      )
+
+  def jsEngineAndTaskSettings = SbtJsEnginePlugin.jsEngineSettings ++ jsTaskSettings
 
   /**
    * Thrown when there is an unexpected problem to do with the task's execution.
@@ -108,33 +132,21 @@ object SbtJsTaskPlugin {
 
 abstract class SbtJsTaskPlugin extends sbt.Plugin {
 
+  import SbtJsTaskPlugin._
+
   import WebKeys._
   import JsEngineKeys._
-  import SbtJsTaskPlugin._
   import SbtJsTaskPlugin.JsTaskKeys._
 
-  private def firstNoneZero(values: Seq[Int]): Int = values find (_ != 0) getOrElse 0
-
-  def jsTaskUnscopedSettings = Seq(
-    jsTasks := Nil,
-    runJsTasks := firstNoneZero(jsTasks(_.join).value: Seq[Int])
+  def jsTaskSpecificUnscopedSettings = Seq(
+    shellSource := {
+      SbtWebPlugin.copyResourceTo(
+        (target in LocalRootProject).value / "jstask-plugin",
+        shellFile.value,
+        SbtJsTaskPlugin.getClass.getClassLoader
+      )
+    }
   )
-
-  import scala.concurrent.duration._
-  def jsTaskSettings = inConfig(Assets)(jsTaskUnscopedSettings) ++ inConfig(TestAssets)(jsTaskUnscopedSettings) ++
-    Seq(
-      shellSource := {
-        SbtWebPlugin.copyResourceTo(
-          (target in LocalRootProject).value / "jstask-plugin",
-          "shell.js",
-          SbtJsTaskPlugin.getClass.getClassLoader
-        )
-      },
-      fileInputHasher := OpInputHasher[File](source => OpInputHash.hashString(source.getAbsolutePath)),
-      compile in Compile <<= (compile in Compile).dependsOn(runJsTasks in Assets),
-      compile in Test <<= (compile in Test).dependsOn(runJsTasks in TestAssets),
-      timeoutPerSource := 30.seconds
-    )
 
   def executeJs(
                  engine: ActorRef,
@@ -172,6 +184,7 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
   /**
    * Primary means of executing a JavaScript shell script. unmanagedResources is assumed
    * to contain the source files to filter on.
+   * @param scope The scope to resolve js task settings from - relates to the concrete plugin sub class
    * @param config The sbt configuration to use e.g. Assets or TestAssets
    * @param fileFilter The files to use from "unmanagedSources in {config}"
    * @param jsOptions The JavaScript options to be passed as a param
@@ -180,6 +193,7 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
    * @return A task object
    */
   def jsTask(
+              scope: Scoped,
               config: Configuration,
               fileFilter: SettingKey[FileFilter],
               jsOptions: TaskKey[String],
@@ -195,9 +209,9 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
       case EngineType.Trireme => Trireme.props(stdEnvironment = NodeEngine.nodePathEnv(immutable.Seq((nodeModules in Plugin).value.getCanonicalPath)))
     }
 
-    val sources = ((unmanagedSources in config).value ** fileFilter.value).get
+    val sources = ((unmanagedSources in config).value ** (fileFilter in config).value).get
 
-    implicit val opInputHasher = fileInputHasher.value
+    implicit val opInputHasher = (fileInputHasher in scope in config).value
     val problems: Seq[Problem] = incremental.runIncremental(streams.value.cacheDirectory, sources) {
       modifiedJsSources: Seq[File] =>
 
@@ -212,19 +226,19 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
               val sourceBatches = (modifiedJsSources grouped Math.max(modifiedJsSources.size / parallelism.value, 1)).toSeq
               sourceBatches.map {
                 sourceBatch =>
-                  implicit val timeout = Timeout(timeoutPerSource.value * sourceBatch.size)
+                  implicit val timeout = Timeout((timeoutPerSource in scope in config).value * sourceBatch.size)
                   withActorRefFactory(state.value, this.getClass.getName) {
                     arf =>
                       val engine = arf.actorOf(engineProps)
-                      implicit val timeout = Timeout(timeoutPerSource.value * sourceBatch.size)
-                      executeJs(engine, shellSource.value, sourceBatch, jsOptions.value)
+                      implicit val timeout = Timeout((timeoutPerSource in scope in config).value * sourceBatch.size)
+                      executeJs(engine, (shellSource in scope in config).value, sourceBatch, jsOptions.value)
                   }
               }
             }
 
           import scala.concurrent.ExecutionContext.Implicits.global
           val pendingResults = Future.sequence(resultBatches)
-          val completedResults = Await.result(pendingResults, timeoutPerSource.value * modifiedJsSources.size)
+          val completedResults = Await.result(pendingResults, (timeoutPerSource in scope in config).value * modifiedJsSources.size)
           completedResults.foldLeft(Map[File, OpResult]() -> Seq[Problem]()) {
             (r1, r2) =>
               (r1._1 ++ r2._1) -> (r1._2 ++ r2._2)
