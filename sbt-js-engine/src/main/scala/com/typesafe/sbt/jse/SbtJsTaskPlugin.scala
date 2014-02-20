@@ -48,7 +48,8 @@ object SbtJsTaskPlugin {
 
   def jsTaskUnscopedSettings = Seq(
     jsTasks := Nil,
-    runJsTasks := firstNoneZero(jsTasks(_.join).value: Seq[Int])
+    runJsTasks := firstNoneZero(jsTasks(_.join).value: Seq[Int]),
+    compile <<= compile.dependsOn(runJsTasks)
   )
 
   import scala.concurrent.duration._
@@ -57,9 +58,7 @@ object SbtJsTaskPlugin {
       inConfig(TestAssets)(jsTaskUnscopedSettings) ++
       Seq(
         fileInputHasher := OpInputHasher[File](source => OpInputHash.hashString(source.getAbsolutePath)),
-        timeoutPerSource := 30.seconds,
-        compile in Compile <<= (compile in Compile).dependsOn(runJsTasks in Assets),
-        compile in Test <<= (compile in Test).dependsOn(runJsTasks in TestAssets)
+        timeoutPerSource := 30.seconds
       )
 
   def jsEngineAndTaskSettings = SbtJsEnginePlugin.jsEngineSettings ++ jsTaskSettings
