@@ -239,21 +239,16 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
           completedResults.foldLeft((FileOpResultMappings(), PathMappingsAndProblems())) {
             (allCompletedResults, completedResult) =>
 
-              val prevOpResults: FileOpResultMappings = allCompletedResults._1
-              val nextOpResults: FileOpResultMappings = completedResult._1
+              val (prevOpResults, prevPathMappingsAndProblems) = allCompletedResults
+              val (prevPathMappings, prevProblems) = prevPathMappingsAndProblems
 
-              val prevPathMappingsAndProblems: PathMappingsAndProblems = allCompletedResults._2
-
-              val prevPathMappings: PathMappings = prevPathMappingsAndProblems._1
-              val nextPathMappings: PathMappings = completedResult._1.values.map {
+              val (nextOpResults, nextProblems) = completedResult
+              val nextPathMappings: PathMappings = nextOpResults.values.map {
                 case opSuccess: OpSuccess =>
                   opSuccess.filesRead.pair(relativeTo((unmanagedSources in config).value)) ++
                     opSuccess.filesWritten.pair(relativeTo((target in scope in config).value))
                 case _ => Nil
               }.toSeq.flatten
-
-              val prevProblems: Problems = prevPathMappingsAndProblems._2
-              val nextProblems: Problems = completedResult._2
 
               (
                 prevOpResults ++ nextOpResults,
