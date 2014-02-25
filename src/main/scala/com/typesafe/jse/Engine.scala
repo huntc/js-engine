@@ -47,9 +47,14 @@ abstract class Engine(stdArgs: immutable.Seq[String], stdEnvironment: Map[String
     context.watch(stdoutSource)
     context.watch(stderrSource)
 
-    context.system.scheduler.scheduleOnce(timeout, self, timeoutExitValue)(context.dispatcher)
+    val timeoutTimer = context.system.scheduler.scheduleOnce(timeout, self, timeoutExitValue)(context.dispatcher)
 
     var openStreams = 3
+
+    def stopContext(): Unit = {
+      timeoutTimer.cancel()
+      context.stop(self)
+    }
 
     {
       case bytes: ByteString => handleStdioBytes(sender, bytes)
@@ -61,12 +66,12 @@ abstract class Engine(stdArgs: immutable.Seq[String], stdEnvironment: Map[String
               openStreams -= 1
               if (openStreams == 0) {
                 sendExecutionResult(exitValue)
-                context.stop(self)
+                stopContext()
               }
             }
           }
         } else {
-          context.stop(self)
+          stopContext()
         }
       case Terminated(`stdinSink` | `stdoutSource` | `stderrSource`) =>
         openStreams -= 1
@@ -74,7 +79,7 @@ abstract class Engine(stdArgs: immutable.Seq[String], stdEnvironment: Map[String
           context.become {
             case exitValue: Int =>
               sendExecutionResult(exitValue)
-              context.stop(self)
+              stopContext()
           }
         }
     }
