@@ -34,7 +34,7 @@ object SbtJsTaskPlugin {
   object JsTaskKeys {
 
     val fileFilter = SettingKey[FileFilter]("jstask-file-filter", "The file extension of files to perform a task on.")
-    val fileInputHasher = TaskKey[OpInputHasher[File]]("jstask-file-input-hasher", "A function that computes constitues a change for a given file.")
+    val fileInputHasher = TaskKey[OpInputHasher[PathMapping]]("jstask-file-input-hasher", "A function that constitues a change for a given file.")
     val jsOptions = TaskKey[String]("jstask-js-options", "The JSON options to be passed to the task.")
     val taskMessage = SettingKey[String]("jstask-message", "The message to output for a task")
     val shellFile = SettingKey[String]("jstask-shell-file", "The name of the file to perform a given task.")
@@ -47,7 +47,7 @@ object SbtJsTaskPlugin {
   import scala.concurrent.duration._
 
   val jsTaskSettings = Seq(
-    fileInputHasher := OpInputHasher[File](source => OpInputHash.hashString(source.getAbsolutePath)),
+    fileInputHasher := OpInputHasher[PathMapping](source => OpInputHash.hashString(source._1.getAbsolutePath)),
     timeoutPerSource := 30.seconds
   )
 
@@ -111,7 +111,7 @@ object SbtJsTaskPlugin {
 
     case class ProblemResultsPair(results: Seq[SourceResultPair], problems: Seq[LineBasedProblem])
 
-    case class SourceResultPair(result: OpResult, source: File)
+    case class SourceResultPair(result: OpResult, source: PathMapping)
 
     implicit val sourceResultPairFormat = jsonFormat2(SourceResultPair)
     implicit val problemResultPairFormat = jsonFormat2(ProblemResultsPair)
@@ -139,31 +139,31 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
   )
 
 
-  private type FileOpResultMappings = Map[File, OpResult]
+  private type FileOpResultMappings = Map[PathMapping, OpResult]
 
-  private def FileOpResultMappings(s: (File, OpResult)*): FileOpResultMappings = Map(s: _*)
+  private def FileOpResultMappings(s: (PathMapping, OpResult)*): FileOpResultMappings = Map(s: _*)
 
-  private type Problems = Seq[Problem]
-
-  private type PathMappingsAndProblems = (PathMappings, Problems)
+  private type PathMappingsAndProblems = (Seq[PathMapping], Seq[Problem])
 
   private def PathMappingsAndProblems(): PathMappingsAndProblems = PathMappingsAndProblems(Nil, Nil)
 
-  private def PathMappingsAndProblems(pathMappingsAndProblems: (PathMappings, Problems)): PathMappingsAndProblems = pathMappingsAndProblems
+  private def PathMappingsAndProblems(pathMappingsAndProblems: (Seq[PathMapping], Seq[Problem])): PathMappingsAndProblems = pathMappingsAndProblems
 
 
   private def executeSourceFilesJs(
                                     engine: ActorRef,
                                     shellSource: File,
-                                    jsSources: Seq[File],
-                                    jsOptions: String
-                                    )(implicit timeout: Timeout): Future[(FileOpResultMappings, Problems)] = {
+                                    sourceFileMappings: Seq[PathMapping],
+                                    target: File,
+                                    options: String
+                                    )(implicit timeout: Timeout): Future[(FileOpResultMappings, Seq[Problem])] = {
 
     import ExecutionContext.Implicits.global
 
     val args = immutable.Seq(
-      JsArray(jsSources.map(x => JsString(x.getCanonicalPath)).toList).toString(),
-      jsOptions
+      JsArray(sourceFileMappings.map(x => JsArray(JsString(x._1.getCanonicalPath), JsString(x._2))).toList).toString(),
+      target.getAbsolutePath,
+      options
     )
 
     (engine ? Engine.ExecuteJs(
@@ -195,7 +195,7 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
   def jsSourceFileTask(
                         scope: Scoped,
                         config: Configuration
-                        ): Def.Initialize[Task[PathMappings]] = Def.task {
+                        ): Def.Initialize[Task[Seq[PathMapping]]] = Def.task {
 
     val engineProps = engineType.value match {
       case EngineType.CommonNode => CommonNode.props(stdEnvironment = NodeEngine.nodePathEnv(immutable.Seq((nodeModules in Plugin).value.getCanonicalPath)))
@@ -205,11 +205,12 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
       case EngineType.Trireme => Trireme.props(stdEnvironment = NodeEngine.nodePathEnv(immutable.Seq((nodeModules in Plugin).value.getCanonicalPath)))
     }
 
-    val sources = ((unmanagedSources in config).value ** (fileFilter in scope in config).value).get
+    val sources = ((unmanagedSources in config).value ** (fileFilter in scope in config).value)
+      .get.pair(relativeTo((unmanagedSources in config).value))
 
     implicit val opInputHasher = (fileInputHasher in scope in config).value
     val results: PathMappingsAndProblems = incremental.runIncremental(streams.value.cacheDirectory, sources) {
-      modifiedJsSources: Seq[File] =>
+      modifiedJsSources: Seq[PathMapping] =>
 
         if (modifiedJsSources.size > 0) {
 
@@ -217,7 +218,7 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
             modifiedJsSources.size
           } source(s)")
 
-          val resultBatches: Seq[Future[(FileOpResultMappings, Problems)]] =
+          val resultBatches: Seq[Future[(FileOpResultMappings, Seq[Problem])]] =
             try {
               val sourceBatches = (modifiedJsSources grouped Math.max(modifiedJsSources.size / parallelism.value, 1)).toSeq
               sourceBatches.map {
@@ -227,7 +228,13 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
                     arf =>
                       val engine = arf.actorOf(engineProps)
                       implicit val timeout = Timeout((timeoutPerSource in scope in config).value * sourceBatch.size)
-                      executeSourceFilesJs(engine, (shellSource in scope in config).value, sourceBatch, (jsOptions in scope in config).value)
+                      executeSourceFilesJs(
+                        engine,
+                        (shellSource in scope in config).value,
+                        sourceBatch,
+                        (target in scope in config).value,
+                        (jsOptions in scope in config).value
+                      )
                   }
               }
             }
@@ -242,7 +249,7 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
               val (prevOpResults, (prevPathMappings, prevProblems)) = allCompletedResults
 
               val (nextOpResults, nextProblems) = completedResult
-              val nextPathMappings: PathMappings = nextOpResults.values.map {
+              val nextPathMappings: Seq[PathMapping] = nextOpResults.values.map {
                 case opSuccess: OpSuccess =>
                   opSuccess.filesRead.pair(relativeTo((unmanagedSources in config).value)) ++
                     opSuccess.filesWritten.pair(relativeTo((target in scope in config).value))
@@ -271,7 +278,7 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
    * @param sourceFileTask The task key to declare.
    * @return The settings produced.
    */
-  def addJsSourceFileTasks(sourceFileTask: TaskKey[PathMappings]): Seq[Setting[_]] = {
+  def addJsSourceFileTasks(sourceFileTask: TaskKey[Seq[PathMapping]]): Seq[Setting[_]] = {
     Seq(
       sourceFileTask in Assets := jsSourceFileTask(sourceFileTask, Assets).value,
       sourceFileTask in TestAssets := jsSourceFileTask(sourceFileTask, TestAssets).value,
