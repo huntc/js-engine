@@ -20,12 +20,11 @@ import com.typesafe.sbt.web.SbtWebPlugin._
 import akka.pattern.ask
 import scala.concurrent.duration.FiniteDuration
 import com.typesafe.sbt.web.incremental
-import sbt.Task
+import com.typesafe.sbt.web.CompileProblems
 import com.typesafe.jse.Engine.JsExecutionResult
 import com.typesafe.sbt.web.incremental.OpSuccess
 import sbt.Configuration
 import sbinary.{Input, Output, Format}
-
 
 /**
  * The commonality of JS task execution oriented plugins is captured by this class.
@@ -150,11 +149,19 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
           SbtWebPlugin.copyResourceTo(
             (target in Plugin).value / moduleName.value,
             shellFile.value,
-            SbtJsTaskPlugin.getClass.getClassLoader
+            SbtJsTaskPlugin.getClass.getClassLoader,
+            streams.value.cacheDirectory
           )
         }
       )
 
+
+  // node.js docs say *NOTHING* about what encoding is used when you write a string to stdout.
+  // It seems that they have it hard coded to use UTF-8, some small tests I did indicate that changing the platform
+  // encoding makes no difference on what encoding node uses when it writes strings to stdout.
+  private val NodeEncoding = "UTF-8"
+  // Used to signal when the script is sending back structured JSON data
+  private val JsonEscapeChar: Char = 0x10
 
   private type FileOpResultMappings = Map[PathMapping, OpResult]
 
@@ -166,13 +173,67 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
 
   private def PathMappingsAndProblems(pathMappingsAndProblems: (Seq[PathMapping], Seq[Problem])): PathMappingsAndProblems = pathMappingsAndProblems
 
+  private def engineTypeToProps(engineType: EngineType.Value, nodeModules: Seq[String]) = {
+    engineType match {
+      case EngineType.CommonNode => CommonNode.props(stdEnvironment = NodeEngine.nodePathEnv(nodeModules.to[immutable.Seq]))
+      case EngineType.Node => Node.props(stdEnvironment = NodeEngine.nodePathEnv(nodeModules.to[immutable.Seq]))
+      case EngineType.PhantomJs => PhantomJs.props()
+      case EngineType.Rhino => Rhino.props()
+      case EngineType.Trireme => Trireme.props(stdEnvironment = NodeEngine.nodePathEnv(nodeModules.to[immutable.Seq]))
+    }
+  }
+
+
+  private def executeJsOnEngine(engine: ActorRef, shellSource: File, args: Seq[String],
+                        stderrSink: String => Unit, stdoutSink: String => Unit)
+                       (implicit timeout: Timeout, ec: ExecutionContext): Future[Seq[JsValue]] = {
+
+    (engine ? Engine.ExecuteJs(
+      shellSource,
+      args.to[immutable.Seq],
+      timeout.duration
+    )).mapTo[JsExecutionResult].map { result =>
+
+      // Stuff below probably not needed once jsengine is refactored to stream this
+
+      // Dump stderr as is
+      if (!result.error.isEmpty) {
+        stderrSink(new String(result.error.toArray, NodeEncoding))
+      }
+
+      // Split stdout into lines
+      val outputLines = new String(result.output.toArray, NodeEncoding).split("\r?\n")
+
+      // Iterate through lines, extracting out JSON messages, and printing the rest out
+      val results = outputLines.foldLeft(Seq.empty[JsValue]) { (results, line) =>
+        if (line.indexOf(JsonEscapeChar) == -1) {
+          stdoutSink(line)
+          results
+        } else {
+          val (out, json) = line.span(_ != JsonEscapeChar)
+          if (!out.isEmpty) {
+            stdoutSink(out)
+          }
+          results :+ JsonParser(json.drop(1))
+        }
+      }
+
+      if (result.exitValue != 0) {
+        throw new JsTaskFailure(new String(result.error.toArray, NodeEncoding))
+      }
+      results
+    }
+
+  }
 
   private def executeSourceFilesJs(
                                     engine: ActorRef,
                                     shellSource: File,
                                     sourceFileMappings: Seq[PathMapping],
                                     target: File,
-                                    options: String
+                                    options: String,
+                                    stderrSink: String => Unit,
+                                    stdoutSink: String => Unit
                                     )(implicit timeout: Timeout): Future[(FileOpResultMappings, Seq[Problem])] = {
 
     import ExecutionContext.Implicits.global
@@ -183,22 +244,16 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
       options
     )
 
-    (engine ? Engine.ExecuteJs(
-      shellSource,
-      args,
-      timeout.duration
-    )).mapTo[JsExecutionResult].map {
-      result: JsExecutionResult =>
-        if (result.exitValue != 0) {
-          throw new JsTaskFailure(new String(result.error.toArray, "UTF-8"))
-        }
-
-        val jsonBytes = result.output.dropWhile(_ != '\u0010').drop(1)
-        val json = new String(jsonBytes.toArray, "UTF-8")
-        val p = JsonParser(json)
-        import JsTaskProtocol._
-        val prp = p.convertTo[ProblemResultsPair]
-        (prp.results.map(sr => sr.source -> sr.result).toMap, prp.problems)
+    executeJsOnEngine(engine, shellSource, args, stderrSink, stdoutSink).map { results =>
+      import JsTaskProtocol._
+      val prp = results.foldLeft(ProblemResultsPair(Nil, Nil)) { (cumulative, result) =>
+        val prp = result.convertTo[ProblemResultsPair]
+        ProblemResultsPair(
+          cumulative.results ++ prp.results,
+          cumulative.problems ++ prp.problems
+        )
+      }
+      (prp.results.map(sr => sr.source -> sr.result).toMap, prp.problems)
     }
   }
 
@@ -226,16 +281,12 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
                         config: Configuration
                         ): Def.Initialize[Task[Seq[PathMapping]]] = Def.task {
 
-    val engineProps = engineType.value match {
-      case EngineType.CommonNode => CommonNode.props(stdEnvironment = NodeEngine.nodePathEnv(immutable.Seq((nodeModules in Plugin).value.getCanonicalPath)))
-      case EngineType.Node => Node.props(stdEnvironment = NodeEngine.nodePathEnv(immutable.Seq((nodeModules in Plugin).value.getCanonicalPath)))
-      case EngineType.PhantomJs => PhantomJs.props()
-      case EngineType.Rhino => Rhino.props()
-      case EngineType.Trireme => Trireme.props(stdEnvironment = NodeEngine.nodePathEnv(immutable.Seq((nodeModules in Plugin).value.getCanonicalPath)))
-    }
+    val engineProps = engineTypeToProps(engineType.value, Seq((nodeModules in Plugin).value.getCanonicalPath))
 
     val sources = ((unmanagedSources in config).value ** (fileFilter in task in config).value)
       .get.pair(relativeTo((unmanagedSources in config).value))
+
+    val logger: Logger = state.value.log
 
     implicit val opInputHasher = (fileInputHasher in task in config).value
     val results: PathMappingsAndProblems = incremental.runIncremental(streams.value.cacheDirectory, sources) {
@@ -262,7 +313,9 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
                         (shellSource in task in config).value,
                         sourceBatch,
                         (resourceManaged in task in config).value,
-                        (jsOptions in task in config).value
+                        (jsOptions in task in config).value,
+                        m => logger.error(m),
+                        m => logger.info(m)
                       )
                   }
               }
@@ -299,6 +352,7 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
     CompileProblems.report(reporter.value, results._2)
 
     import Cache._
+
     val previousMappings = task.previous.getOrElse(Nil)
     val untouchedMappings = previousMappings.toSet -- results._1
     untouchedMappings.filter(_._1.exists).toSeq ++ results._1
@@ -320,4 +374,41 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
       assetTasks in TestAssets <+= (sourceFileTask in TestAssets)
     )
   }
-}
+
+    /**
+     * Execute some arbitrary JavaScript.
+     *
+     * This method is intended to assist in building SBT tasks that execute generic JavaScript.  For example:
+     *
+     * {{{
+     * myTask := {
+     *   executeJs(state.value, engineType.value, Seq((nodeModules in Plugin).value.getCanonicalPath,
+     *     baseDirectory.value / "path" / "to" / "myscript.js", Seq("arg1", "arg2"), 30.seconds)
+     * }
+     * }}}
+     *
+     * @param state The SBT state.
+     * @param engineType The type of engine to use.
+     * @param nodeModules The node modules to provide (if the JavaScript engine in use supports this).
+     * @param shellSource The script to execute.
+     * @param args The arguments to pass to the script.
+     * @param timeout The maximum amount of time to wait for the script to finish.
+     * @return A JSON status object if one was sent by the script.  A script can send a JSON status object by, as the
+     *         last thing it does, sending a DLE character (0x10) followed by some JSON to std out.
+     */
+    def executeJs(state: State, engineType: EngineType.Value, nodeModules: Seq[String], shellSource: File, args: Seq[String], timeout: FiniteDuration): Seq[JsValue] = {
+      val engineProps = engineTypeToProps(engineType, nodeModules)
+
+      withActorRefFactory(state, this.getClass.getName) { arf =>
+        val engine = arf.actorOf(engineProps)
+        implicit val t = Timeout(timeout)
+        import ExecutionContext.Implicits.global
+        Await.result(
+          executeJsOnEngine(engine, shellSource, args, m => state.log.error(m), m => state.log.info(m)),
+          timeout
+        )
+      }
+    }
+
+
+  }

@@ -9,6 +9,7 @@ import scala.collection.immutable
 import io.apigee.trireme.core._
 import scala.collection.JavaConverters._
 import com.typesafe.jse.Engine.ExecuteJs
+import org.mozilla.javascript.RhinoException
 
 /**
  * Declares an in-JVM Rhino based JavaScript engine supporting the Node API.
@@ -145,6 +146,12 @@ private[jse] class TriremeShell(
       val senderSys = context.system
       script.execute.setListener(new ScriptStatusListener {
         def onComplete(script: NodeScript, status: ScriptStatus): Unit = {
+          if (status.hasCause) {
+            status.getCause match {
+              case e: RhinoException => stderrOs.write(e.getScriptStackTrace.getBytes("UTF-8"))
+              case t => t.printStackTrace(new PrintStream(stderrOs))
+            }
+          }
           stdoutOs.close()
           stderrOs.close()
           senderSys.actorSelection(senderSel) ! status.getExitCode
