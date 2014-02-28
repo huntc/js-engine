@@ -34,7 +34,7 @@ class SbtJsTaskPluginSpec extends Specification with NoTimeConversions {
                           ],
                           "filesWritten": []
                       },
-                      "source": "src/main/assets/js/a.js"
+                      "source": ["src/main/assets/js/a.js", "/js/a.js"]
                   }
               ]
           }
@@ -53,7 +53,7 @@ class SbtJsTaskPluginSpec extends Specification with NoTimeConversions {
       val opSuccess = problemResultsPair.results(0).result.asInstanceOf[OpSuccess]
       opSuccess.filesRead.size must_== 1
       opSuccess.filesWritten.size must_== 0
-      problemResultsPair.results(0).source must_== new File("src/main/assets/js/a.js")
+      problemResultsPair.results(0).source must_== new File("src/main/assets/js/a.js") -> "/js/a.js"
     }
   }
 
