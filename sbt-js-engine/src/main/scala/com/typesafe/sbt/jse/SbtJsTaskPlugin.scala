@@ -91,8 +91,8 @@ object SbtJsTaskPlugin {
           o.fields.get("severity").map {
             v =>
               v.toString() match {
-                case "(info)" => Severity.Info
-                case "(warn)" => Severity.Warn
+                case "info" => Severity.Info
+                case "warn" => Severity.Warn
                 case _ => Severity.Error
               }
           }.getOrElse(Severity.Error),
