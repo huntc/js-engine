@@ -150,7 +150,7 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
             (target in Plugin).value / moduleName.value,
             shellFile.value,
             SbtJsTaskPlugin.getClass.getClassLoader,
-            streams.value.cacheDirectory
+            streams.value.cacheDirectory / "copy-resource"
           )
         }
       )
@@ -289,7 +289,7 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
     val logger: Logger = state.value.log
 
     implicit val opInputHasher = (fileInputHasher in task in config).value
-    val results: PathMappingsAndProblems = incremental.runIncremental(streams.value.cacheDirectory, sources) {
+    val results: PathMappingsAndProblems = incremental.runIncremental(streams.value.cacheDirectory / "run", sources) {
       modifiedJsSources: Seq[PathMapping] =>
 
         if (modifiedJsSources.size > 0) {
