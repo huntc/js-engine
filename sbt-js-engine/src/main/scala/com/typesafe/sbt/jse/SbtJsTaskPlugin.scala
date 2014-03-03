@@ -71,15 +71,6 @@ object SbtJsTaskPlugin {
       }
     }
 
-    implicit object PathMappingFormat extends JsonFormat[PathMapping] {
-      def write(p: PathMapping) = JsArray(JsString(p._1.getCanonicalPath), JsString(p._2))
-
-      def read(value: JsValue) = value match {
-        case a: JsArray => FileFormat.read(a.elements(0)) -> a.elements(1).convertTo[String]
-        case x => deserializationError(s"Array expected for a path mapping, instead got $x")
-      }
-    }
-
     implicit val opSuccessFormat = jsonFormat2(OpSuccess)
 
     implicit object LineBasedProblemFormat extends JsonFormat[LineBasedProblem] {
@@ -119,7 +110,7 @@ object SbtJsTaskPlugin {
 
     case class ProblemResultsPair(results: Seq[SourceResultPair], problems: Seq[LineBasedProblem])
 
-    case class SourceResultPair(result: OpResult, source: PathMapping)
+    case class SourceResultPair(result: OpResult, source: File)
 
     implicit val sourceResultPairFormat = jsonFormat2(SourceResultPair)
     implicit val problemResultPairFormat = jsonFormat2(ProblemResultsPair)
@@ -163,15 +154,15 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
   // Used to signal when the script is sending back structured JSON data
   private val JsonEscapeChar: Char = 0x10
 
-  private type FileOpResultMappings = Map[PathMapping, OpResult]
+  private type FileOpResultMappings = Map[File, OpResult]
 
-  private def FileOpResultMappings(s: (PathMapping, OpResult)*): FileOpResultMappings = Map(s: _*)
+  private def FileOpResultMappings(s: (File, OpResult)*): FileOpResultMappings = Map(s: _*)
 
   private type FileWrittenAndProblems = (Seq[File], Seq[Problem])
 
   private def FilesWrittenAndProblems(): FileWrittenAndProblems = FilesWrittenAndProblems(Nil, Nil)
 
-  private def FilesWrittenAndProblems(pathMappingsAndProblems: (Seq[File], Seq[Problem])): FileWrittenAndProblems = pathMappingsAndProblems
+  private def FilesWrittenAndProblems(filesWrittenAndProblems: (Seq[File], Seq[Problem])): FileWrittenAndProblems = filesWrittenAndProblems
 
   private def engineTypeToProps(engineType: EngineType.Value, env: Map[String, String]) = {
     engineType match {
@@ -287,24 +278,23 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
 
     val engineProps = engineTypeToProps(engineType.value, NodeEngine.nodePathEnv(immutable.Seq((nodeModules in Plugin).value.getCanonicalPath)))
 
-    val sources = ((unmanagedSources in config).value ** (fileFilter in task in config).value)
-      .get.pair(relativeTo((unmanagedSources in config).value))
+    val sources = ((unmanagedSources in config).value ** (fileFilter in task in config).value).get
 
     val logger: Logger = state.value.log
 
     implicit val opInputHasher = (fileInputHasher in task in config).value
     val results: FileWrittenAndProblems = incremental.runIncremental(streams.value.cacheDirectory / "run", sources) {
-      modifiedJsSources: Seq[PathMapping] =>
+      modifiedSources: Seq[File] =>
 
-        if (modifiedJsSources.size > 0) {
+        if (modifiedSources.size > 0) {
 
           streams.value.log.info(s"${(taskMessage in task in config).value} on ${
-            modifiedJsSources.size
+            modifiedSources.size
           } source(s)")
 
           val resultBatches: Seq[Future[(FileOpResultMappings, Seq[Problem])]] =
             try {
-              val sourceBatches = (modifiedJsSources grouped Math.max(modifiedJsSources.size / parallelism.value, 1)).toSeq
+              val sourceBatches = (modifiedSources grouped Math.max(modifiedSources.size / parallelism.value, 1)).toSeq
               sourceBatches.map {
                 sourceBatch =>
                   implicit val timeout = Timeout((timeoutPerSource in task in config).value * sourceBatch.size)
@@ -315,7 +305,7 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
                       executeSourceFilesJs(
                         engine,
                         (shellSource in task in config).value,
-                        sourceBatch,
+                        sourceBatch.pair(relativeTo((unmanagedSources in config).value)),
                         (resourceManaged in task in config).value,
                         (jsOptions in task in config).value,
                         m => logger.error(m),
@@ -327,7 +317,7 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
 
           import scala.concurrent.ExecutionContext.Implicits.global
           val pendingResults = Future.sequence(resultBatches)
-          val completedResults = Await.result(pendingResults, (timeoutPerSource in task in config).value * modifiedJsSources.size)
+          val completedResults = Await.result(pendingResults, (timeoutPerSource in task in config).value * modifiedSources.size)
 
           completedResults.foldLeft((FileOpResultMappings(), FilesWrittenAndProblems())) {
             (allCompletedResults, completedResult) =>
