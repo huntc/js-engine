@@ -34,7 +34,7 @@ object SbtJsTaskPlugin {
   object JsTaskKeys {
 
     val fileFilter = SettingKey[FileFilter]("jstask-file-filter", "The file extension of files to perform a task on.")
-    val fileInputHasher = TaskKey[OpInputHasher[PathMapping]]("jstask-file-input-hasher", "A function that constitues a change for a given file.")
+    val fileInputHasher = TaskKey[OpInputHasher[File]]("jstask-file-input-hasher", "A function that constitues a change for a given file.")
     val jsOptions = TaskKey[String]("jstask-js-options", "The JSON options to be passed to the task.")
     val taskMessage = SettingKey[String]("jstask-message", "The message to output for a task")
     val shellFile = SettingKey[String]("jstask-shell-file", "The name of the file to perform a given task.")
@@ -136,7 +136,7 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
   import SbtJsTaskPlugin.JsTaskKeys._
 
   val jsTaskSpecificUnscopedConfigSettings = Seq(
-    fileInputHasher := OpInputHasher[PathMapping](p => OpInputHash.hashString(p._1.getAbsolutePath + "|" + jsOptions.value)),
+    fileInputHasher := OpInputHasher[File](f => OpInputHash.hashString(f.getAbsolutePath + "|" + jsOptions.value)),
     jsOptions := "{}",
     resourceManaged := target.value / moduleName.value
   )
@@ -167,61 +167,63 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
 
   private def FileOpResultMappings(s: (PathMapping, OpResult)*): FileOpResultMappings = Map(s: _*)
 
-  private type PathMappingsAndProblems = (Seq[PathMapping], Seq[Problem])
+  private type FileWrittenAndProblems = (Seq[File], Seq[Problem])
 
-  private def PathMappingsAndProblems(): PathMappingsAndProblems = PathMappingsAndProblems(Nil, Nil)
+  private def FilesWrittenAndProblems(): FileWrittenAndProblems = FilesWrittenAndProblems(Nil, Nil)
 
-  private def PathMappingsAndProblems(pathMappingsAndProblems: (Seq[PathMapping], Seq[Problem])): PathMappingsAndProblems = pathMappingsAndProblems
+  private def FilesWrittenAndProblems(pathMappingsAndProblems: (Seq[File], Seq[Problem])): FileWrittenAndProblems = pathMappingsAndProblems
 
-  private def engineTypeToProps(engineType: EngineType.Value, nodeModules: Seq[String]) = {
+  private def engineTypeToProps(engineType: EngineType.Value, env: Map[String, String]) = {
     engineType match {
-      case EngineType.CommonNode => CommonNode.props(stdEnvironment = NodeEngine.nodePathEnv(nodeModules.to[immutable.Seq]))
-      case EngineType.Node => Node.props(stdEnvironment = NodeEngine.nodePathEnv(nodeModules.to[immutable.Seq]))
+      case EngineType.CommonNode => CommonNode.props(stdEnvironment = env)
+      case EngineType.Node => Node.props(stdEnvironment = env)
       case EngineType.PhantomJs => PhantomJs.props()
       case EngineType.Rhino => Rhino.props()
-      case EngineType.Trireme => Trireme.props(stdEnvironment = NodeEngine.nodePathEnv(nodeModules.to[immutable.Seq]))
+      case EngineType.Trireme => Trireme.props(stdEnvironment = env)
     }
   }
 
 
   private def executeJsOnEngine(engine: ActorRef, shellSource: File, args: Seq[String],
-                        stderrSink: String => Unit, stdoutSink: String => Unit)
-                       (implicit timeout: Timeout, ec: ExecutionContext): Future[Seq[JsValue]] = {
+                                stderrSink: String => Unit, stdoutSink: String => Unit)
+                               (implicit timeout: Timeout, ec: ExecutionContext): Future[Seq[JsValue]] = {
 
     (engine ? Engine.ExecuteJs(
       shellSource,
       args.to[immutable.Seq],
       timeout.duration
-    )).mapTo[JsExecutionResult].map { result =>
+    )).mapTo[JsExecutionResult].map {
+      result =>
 
       // Stuff below probably not needed once jsengine is refactored to stream this
 
       // Dump stderr as is
-      if (!result.error.isEmpty) {
-        stderrSink(new String(result.error.toArray, NodeEncoding))
-      }
-
-      // Split stdout into lines
-      val outputLines = new String(result.output.toArray, NodeEncoding).split("\r?\n")
-
-      // Iterate through lines, extracting out JSON messages, and printing the rest out
-      val results = outputLines.foldLeft(Seq.empty[JsValue]) { (results, line) =>
-        if (line.indexOf(JsonEscapeChar) == -1) {
-          stdoutSink(line)
-          results
-        } else {
-          val (out, json) = line.span(_ != JsonEscapeChar)
-          if (!out.isEmpty) {
-            stdoutSink(out)
-          }
-          results :+ JsonParser(json.drop(1))
+        if (!result.error.isEmpty) {
+          stderrSink(new String(result.error.toArray, NodeEncoding))
         }
-      }
 
-      if (result.exitValue != 0) {
-        throw new JsTaskFailure(new String(result.error.toArray, NodeEncoding))
-      }
-      results
+        // Split stdout into lines
+        val outputLines = new String(result.output.toArray, NodeEncoding).split("\r?\n")
+
+        // Iterate through lines, extracting out JSON messages, and printing the rest out
+        val results = outputLines.foldLeft(Seq.empty[JsValue]) {
+          (results, line) =>
+            if (line.indexOf(JsonEscapeChar) == -1) {
+              stdoutSink(line)
+              results
+            } else {
+              val (out, json) = line.span(_ != JsonEscapeChar)
+              if (!out.isEmpty) {
+                stdoutSink(out)
+              }
+              results :+ JsonParser(json.drop(1))
+            }
+        }
+
+        if (result.exitValue != 0) {
+          throw new JsTaskFailure(new String(result.error.toArray, NodeEncoding))
+        }
+        results
     }
 
   }
@@ -244,16 +246,18 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
       options
     )
 
-    executeJsOnEngine(engine, shellSource, args, stderrSink, stdoutSink).map { results =>
-      import JsTaskProtocol._
-      val prp = results.foldLeft(ProblemResultsPair(Nil, Nil)) { (cumulative, result) =>
-        val prp = result.convertTo[ProblemResultsPair]
-        ProblemResultsPair(
-          cumulative.results ++ prp.results,
-          cumulative.problems ++ prp.problems
-        )
-      }
-      (prp.results.map(sr => sr.source -> sr.result).toMap, prp.problems)
+    executeJsOnEngine(engine, shellSource, args, stderrSink, stdoutSink).map {
+      results =>
+        import JsTaskProtocol._
+        val prp = results.foldLeft(ProblemResultsPair(Nil, Nil)) {
+          (cumulative, result) =>
+            val prp = result.convertTo[ProblemResultsPair]
+            ProblemResultsPair(
+              cumulative.results ++ prp.results,
+              cumulative.problems ++ prp.problems
+            )
+        }
+        (prp.results.map(sr => sr.source -> sr.result).toMap, prp.problems)
     }
   }
 
@@ -277,11 +281,11 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
    * @return A task object
    */
   def jsSourceFileTask(
-                        task: TaskKey[Seq[PathMapping]],
+                        task: TaskKey[Seq[File]],
                         config: Configuration
-                        ): Def.Initialize[Task[Seq[PathMapping]]] = Def.task {
+                        ): Def.Initialize[Task[Seq[File]]] = Def.task {
 
-    val engineProps = engineTypeToProps(engineType.value, Seq((nodeModules in Plugin).value.getCanonicalPath))
+    val engineProps = engineTypeToProps(engineType.value, NodeEngine.nodePathEnv(immutable.Seq((nodeModules in Plugin).value.getCanonicalPath)))
 
     val sources = ((unmanagedSources in config).value ** (fileFilter in task in config).value)
       .get.pair(relativeTo((unmanagedSources in config).value))
@@ -289,7 +293,7 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
     val logger: Logger = state.value.log
 
     implicit val opInputHasher = (fileInputHasher in task in config).value
-    val results: PathMappingsAndProblems = incremental.runIncremental(streams.value.cacheDirectory / "run", sources) {
+    val results: FileWrittenAndProblems = incremental.runIncremental(streams.value.cacheDirectory / "run", sources) {
       modifiedJsSources: Seq[PathMapping] =>
 
         if (modifiedJsSources.size > 0) {
@@ -325,27 +329,25 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
           val pendingResults = Future.sequence(resultBatches)
           val completedResults = Await.result(pendingResults, (timeoutPerSource in task in config).value * modifiedJsSources.size)
 
-          completedResults.foldLeft((FileOpResultMappings(), PathMappingsAndProblems())) {
+          completedResults.foldLeft((FileOpResultMappings(), FilesWrittenAndProblems())) {
             (allCompletedResults, completedResult) =>
 
-              val (prevOpResults, (prevPathMappings, prevProblems)) = allCompletedResults
+              val (prevOpResults, (prevFilesWritten, prevProblems)) = allCompletedResults
 
               val (nextOpResults, nextProblems) = completedResult
-              val nextPathMappings: Seq[PathMapping] = nextOpResults.values.map {
-                case opSuccess: OpSuccess =>
-                  opSuccess.filesRead.pair(relativeTo((unmanagedSources in config).value)) ++
-                    opSuccess.filesWritten.pair(relativeTo((target in task in config).value), errorIfNone = false)
+              val nextFilesWritten: Seq[File] = nextOpResults.values.map {
+                case opSuccess: OpSuccess => opSuccess.filesWritten
                 case _ => Nil
               }.flatten.toSeq
 
               (
                 prevOpResults ++ nextOpResults,
-                PathMappingsAndProblems(prevPathMappings ++ nextPathMappings, prevProblems ++ nextProblems)
+                FilesWrittenAndProblems(prevFilesWritten ++ nextFilesWritten, prevProblems ++ nextProblems)
                 )
           }
 
         } else {
-          (FileOpResultMappings(), PathMappingsAndProblems())
+          (FileOpResultMappings(), FilesWrittenAndProblems())
         }
     }
 
@@ -355,7 +357,7 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
 
     val previousMappings = task.previous.getOrElse(Nil)
     val untouchedMappings = previousMappings.toSet -- results._1
-    untouchedMappings.filter(_._1.exists).toSeq ++ results._1
+    untouchedMappings.filter(_.exists).toSeq ++ results._1
   }
 
   /**
@@ -364,42 +366,50 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
    * @param sourceFileTask The task key to declare.
    * @return The settings produced.
    */
-  def addJsSourceFileTasks(sourceFileTask: TaskKey[Seq[PathMapping]]): Seq[Setting[_]] = {
+  def addJsSourceFileTasks(sourceFileTask: TaskKey[Seq[File]]): Seq[Setting[_]] = {
     Seq(
       sourceFileTask in Assets := jsSourceFileTask(sourceFileTask, Assets).value,
       sourceFileTask in TestAssets := jsSourceFileTask(sourceFileTask, TestAssets).value,
       sourceFileTask := (sourceFileTask in Assets).value,
 
-      assetTasks in Assets <+= (sourceFileTask in Assets),
-      assetTasks in TestAssets <+= (sourceFileTask in TestAssets)
+      resourceGenerators in Assets <+= (sourceFileTask in Assets),
+      resourceGenerators in TestAssets <+= (sourceFileTask in TestAssets)
     )
   }
 
-    /**
-     * Execute some arbitrary JavaScript.
-     *
-     * This method is intended to assist in building SBT tasks that execute generic JavaScript.  For example:
-     *
-     * {{{
-     * myTask := {
-     *   executeJs(state.value, engineType.value, Seq((nodeModules in Plugin).value.getCanonicalPath,
-     *     baseDirectory.value / "path" / "to" / "myscript.js", Seq("arg1", "arg2"), 30.seconds)
-     * }
-     * }}}
-     *
-     * @param state The SBT state.
-     * @param engineType The type of engine to use.
-     * @param nodeModules The node modules to provide (if the JavaScript engine in use supports this).
-     * @param shellSource The script to execute.
-     * @param args The arguments to pass to the script.
-     * @param timeout The maximum amount of time to wait for the script to finish.
-     * @return A JSON status object if one was sent by the script.  A script can send a JSON status object by, as the
-     *         last thing it does, sending a DLE character (0x10) followed by some JSON to std out.
-     */
-    def executeJs(state: State, engineType: EngineType.Value, nodeModules: Seq[String], shellSource: File, args: Seq[String], timeout: FiniteDuration): Seq[JsValue] = {
-      val engineProps = engineTypeToProps(engineType, nodeModules)
+  /**
+   * Execute some arbitrary JavaScript.
+   *
+   * This method is intended to assist in building SBT tasks that execute generic JavaScript.  For example:
+   *
+   * {{{
+   * myTask := {
+   *   executeJs(state.value, engineType.value, Seq((nodeModules in Plugin).value.getCanonicalPath,
+   *     baseDirectory.value / "path" / "to" / "myscript.js", Seq("arg1", "arg2"), 30.seconds)
+   * }
+   * }}}
+   *
+   * @param state The SBT state.
+   * @param engineType The type of engine to use.
+   * @param nodeModules The node modules to provide (if the JavaScript engine in use supports this).
+   * @param shellSource The script to execute.
+   * @param args The arguments to pass to the script.
+   * @param timeout The maximum amount of time to wait for the script to finish.
+   * @return A JSON status object if one was sent by the script.  A script can send a JSON status object by, as the
+   *         last thing it does, sending a DLE character (0x10) followed by some JSON to std out.
+   */
+  def executeJs(
+                 state: State,
+                 engineType: EngineType.Value,
+                 nodeModules: Seq[String],
+                 shellSource: File,
+                 args: Seq[String],
+                 timeout: FiniteDuration
+                 ): Seq[JsValue] = {
+    val engineProps = engineTypeToProps(engineType, NodeEngine.nodePathEnv(nodeModules.to[immutable.Seq]))
 
-      withActorRefFactory(state, this.getClass.getName) { arf =>
+    withActorRefFactory(state, this.getClass.getName) {
+      arf =>
         val engine = arf.actorOf(engineProps)
         implicit val t = Timeout(timeout)
         import ExecutionContext.Implicits.global
@@ -407,8 +417,7 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
           executeJsOnEngine(engine, shellSource, args, m => state.log.error(m), m => state.log.info(m)),
           timeout
         )
-      }
     }
-
-
   }
+
+}
