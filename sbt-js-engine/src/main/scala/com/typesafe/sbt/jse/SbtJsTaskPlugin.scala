@@ -158,11 +158,11 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
 
   private def FileOpResultMappings(s: (File, OpResult)*): FileOpResultMappings = Map(s: _*)
 
-  private type FileWrittenAndProblems = (Seq[File], Seq[Problem])
+  private type FileWrittenAndProblems = (Boolean, Seq[File], Seq[Problem])
 
-  private def FilesWrittenAndProblems(): FileWrittenAndProblems = FilesWrittenAndProblems(Nil, Nil)
+  private def FilesWrittenAndProblems(fullRun: Boolean): FileWrittenAndProblems = FilesWrittenAndProblems(fullRun, Nil, Nil)
 
-  private def FilesWrittenAndProblems(filesWrittenAndProblems: (Seq[File], Seq[Problem])): FileWrittenAndProblems = filesWrittenAndProblems
+  private def FilesWrittenAndProblems(filesWrittenAndProblems: (Boolean, Seq[File], Seq[Problem])): FileWrittenAndProblems = filesWrittenAndProblems
 
   private def engineTypeToProps(engineType: EngineType.Value, env: Map[String, String]) = {
     engineType match {
@@ -257,7 +257,7 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
    */
   private implicit object FileFormat extends Format[File] {
 
-    import Cache._
+    import sbinary.DefaultProtocol._
 
     def reads(in: Input): File = file(StringFormat.reads(in))
 
@@ -286,6 +286,8 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
     val results: FileWrittenAndProblems = incremental.runIncremental(streams.value.cacheDirectory / "run", sources) {
       modifiedSources: Seq[File] =>
 
+        val fullRun = modifiedSources.size == sources.size
+
         if (modifiedSources.size > 0) {
 
           streams.value.log.info(s"${(taskMessage in task in config).value} on ${
@@ -305,7 +307,7 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
                       executeSourceFilesJs(
                         engine,
                         (shellSource in task in config).value,
-                        sourceBatch.pair(relativeTo((unmanagedSources in config).value)),
+                        sourceBatch.pair(relativeTo((unmanagedSourceDirectories in config).value)),
                         (resourceManaged in task in config).value,
                         (jsOptions in task in config).value,
                         m => logger.error(m),
@@ -319,10 +321,10 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
           val pendingResults = Future.sequence(resultBatches)
           val completedResults = Await.result(pendingResults, (timeoutPerSource in task in config).value * modifiedSources.size)
 
-          completedResults.foldLeft((FileOpResultMappings(), FilesWrittenAndProblems())) {
+          completedResults.foldLeft((FileOpResultMappings(), FilesWrittenAndProblems(fullRun))) {
             (allCompletedResults, completedResult) =>
 
-              val (prevOpResults, (prevFilesWritten, prevProblems)) = allCompletedResults
+              val (prevOpResults, (_, prevFilesWritten, prevProblems)) = allCompletedResults
 
               val (nextOpResults, nextProblems) = completedResult
               val nextFilesWritten: Seq[File] = nextOpResults.values.map {
@@ -332,22 +334,23 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
 
               (
                 prevOpResults ++ nextOpResults,
-                FilesWrittenAndProblems(prevFilesWritten ++ nextFilesWritten, prevProblems ++ nextProblems)
+                FilesWrittenAndProblems(fullRun, prevFilesWritten ++ nextFilesWritten, prevProblems ++ nextProblems)
                 )
           }
 
         } else {
-          (FileOpResultMappings(), FilesWrittenAndProblems())
+          (FileOpResultMappings(), FilesWrittenAndProblems(fullRun))
         }
     }
 
-    CompileProblems.report(reporter.value, results._2)
+    val (fullRun, filesWritten, problems) = results
+
+    CompileProblems.report(reporter.value, problems)
 
     import Cache._
-
-    val previousMappings = task.previous.getOrElse(Nil)
-    val untouchedMappings = previousMappings.toSet -- results._1
-    untouchedMappings.filter(_.exists).toSeq ++ results._1
+    val previousMappings = if (fullRun) Nil else (task in config).previous.getOrElse(Nil)
+    val untouchedMappings = previousMappings.toSet -- filesWritten
+    untouchedMappings.filter(_.exists).toSeq ++ filesWritten
   }
 
   /**
@@ -363,7 +366,10 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
       sourceFileTask := (sourceFileTask in Assets).value,
 
       resourceGenerators in Assets <+= (sourceFileTask in Assets),
-      resourceGenerators in TestAssets <+= (sourceFileTask in TestAssets)
+      resourceGenerators in TestAssets <+= (sourceFileTask in TestAssets),
+
+      managedResourceDirectories in Assets += (resourceManaged in sourceFileTask in Assets).value,
+      managedResourceDirectories in TestAssets += (resourceManaged in sourceFileTask in Assets).value
     )
   }
 
