@@ -353,6 +353,14 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
     untouchedMappings.filter(_.exists).toSeq ++ filesWritten
   }
 
+  private def addUnscopedJsSourceFileTasks(sourceFileTask: TaskKey[Seq[File]]): Seq[Setting[_]] = {
+    Seq(
+      resourceGenerators <+= sourceFileTask,
+      resourceManaged in sourceFileTask := resourceManaged.value / moduleName.value,
+      managedResourceDirectories += (resourceManaged in sourceFileTask).value
+    )
+  }
+
   /**
    * Convenience method to add a source file task into the Asset and TestAsset configurations, along with adding the
    * source file tasks in to their respective collection.
@@ -363,14 +371,10 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
     Seq(
       sourceFileTask in Assets := jsSourceFileTask(sourceFileTask, Assets).value,
       sourceFileTask in TestAssets := jsSourceFileTask(sourceFileTask, TestAssets).value,
-      sourceFileTask := (sourceFileTask in Assets).value,
-
-      resourceGenerators in Assets <+= (sourceFileTask in Assets),
-      resourceGenerators in TestAssets <+= (sourceFileTask in TestAssets),
-
-      managedResourceDirectories in Assets += (resourceManaged in sourceFileTask in Assets).value,
-      managedResourceDirectories in TestAssets += (resourceManaged in sourceFileTask in Assets).value
-    )
+      sourceFileTask := (sourceFileTask in Assets).value
+    ) ++
+      inConfig(Assets)(addUnscopedJsSourceFileTasks(sourceFileTask)) ++
+      inConfig(TestAssets)(addUnscopedJsSourceFileTasks(sourceFileTask))
   }
 
   /**
