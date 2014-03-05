@@ -277,7 +277,7 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
                         ): Def.Initialize[Task[Seq[File]]] = Def.task {
 
     val nodeModulePaths = (nodeModuleDirectories in Plugin).value.map(_.getCanonicalPath)
-    val engineProps = engineTypeToProps(engineType.value, NodeEngine.nodePathEnv(nodeModulePaths.to[immutable.Seq]))
+    val engineProps = engineTypeToProps((engineType in task).value, NodeEngine.nodePathEnv(nodeModulePaths.to[immutable.Seq]))
 
     val sources = ((unmanagedSources in config).value ** (fileFilter in task in config).value).get
 
@@ -297,7 +297,7 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
 
           val resultBatches: Seq[Future[(FileOpResultMappings, Seq[Problem])]] =
             try {
-              val sourceBatches = (modifiedSources grouped Math.max(modifiedSources.size / parallelism.value, 1)).toSeq
+              val sourceBatches = (modifiedSources grouped Math.max(modifiedSources.size / (parallelism in task).value, 1)).toSeq
               sourceBatches.map {
                 sourceBatch =>
                   implicit val timeout = Timeout((timeoutPerSource in task in config).value * sourceBatch.size)
@@ -346,7 +346,7 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
 
     val (fullRun, filesWritten, problems) = results
 
-    CompileProblems.report(reporter.value, problems)
+    CompileProblems.report((reporter in task).value, problems)
 
     import Cache._
     val previousMappings = if (fullRun) Nil else (task in config).previous.getOrElse(Nil)
