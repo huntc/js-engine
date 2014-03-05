@@ -276,7 +276,8 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
                         config: Configuration
                         ): Def.Initialize[Task[Seq[File]]] = Def.task {
 
-    val engineProps = engineTypeToProps(engineType.value, NodeEngine.nodePathEnv(immutable.Seq((nodeModules in Plugin).value.getCanonicalPath)))
+    val nodeModulePaths = (nodeModuleDirectories in Plugin).value.map(_.getCanonicalPath)
+    val engineProps = engineTypeToProps(engineType.value, NodeEngine.nodePathEnv(nodeModulePaths.to[immutable.Seq]))
 
     val sources = ((unmanagedSources in config).value ** (fileFilter in task in config).value).get
 
@@ -369,8 +370,8 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
    */
   def addJsSourceFileTasks(sourceFileTask: TaskKey[Seq[File]]): Seq[Setting[_]] = {
     Seq(
-      sourceFileTask in Assets := jsSourceFileTask(sourceFileTask, Assets).value,
-      sourceFileTask in TestAssets := jsSourceFileTask(sourceFileTask, TestAssets).value,
+      sourceFileTask in Assets := jsSourceFileTask(sourceFileTask, Assets).dependsOn(nodeModules in Plugin).value,
+      sourceFileTask in TestAssets := jsSourceFileTask(sourceFileTask, TestAssets).dependsOn(nodeModules in Plugin).value,
       sourceFileTask := (sourceFileTask in Assets).value
     ) ++
       inConfig(Assets)(addUnscopedJsSourceFileTasks(sourceFileTask)) ++
