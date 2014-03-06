@@ -15,7 +15,6 @@ import akka.util.Timeout
 import scala.concurrent.{Await, ExecutionContext, Future}
 import scala.collection.immutable
 import com.typesafe.jse._
-import com.typesafe.jse.Node
 import com.typesafe.sbt.web.SbtWebPlugin._
 import akka.pattern.ask
 import scala.concurrent.duration.FiniteDuration
@@ -164,16 +163,6 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
 
   private def FilesWrittenAndProblems(filesWrittenAndProblems: (Boolean, Seq[File], Seq[Problem])): FileWrittenAndProblems = filesWrittenAndProblems
 
-  private def engineTypeToProps(engineType: EngineType.Value, env: Map[String, String]) = {
-    engineType match {
-      case EngineType.CommonNode => CommonNode.props(stdEnvironment = env)
-      case EngineType.Node => Node.props(stdEnvironment = env)
-      case EngineType.PhantomJs => PhantomJs.props()
-      case EngineType.Rhino => Rhino.props()
-      case EngineType.Trireme => Trireme.props(stdEnvironment = env)
-    }
-  }
-
 
   private def executeJsOnEngine(engine: ActorRef, shellSource: File, args: Seq[String],
                                 stderrSink: String => Unit, stdoutSink: String => Unit)
@@ -277,7 +266,7 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
                         ): Def.Initialize[Task[Seq[File]]] = Def.task {
 
     val nodeModulePaths = (nodeModuleDirectories in Plugin).value.map(_.getCanonicalPath)
-    val engineProps = engineTypeToProps((engineType in task).value, NodeEngine.nodePathEnv(nodeModulePaths.to[immutable.Seq]))
+    val engineProps = SbtJsEnginePlugin.engineTypeToProps((engineType in task).value, NodeEngine.nodePathEnv(nodeModulePaths.to[immutable.Seq]))
 
     val sources = ((unmanagedSources in config).value ** (fileFilter in task in config).value).get
 
@@ -407,7 +396,7 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
                  args: Seq[String],
                  timeout: FiniteDuration
                  ): Seq[JsValue] = {
-    val engineProps = engineTypeToProps(engineType, NodeEngine.nodePathEnv(nodeModules.to[immutable.Seq]))
+    val engineProps = SbtJsEnginePlugin.engineTypeToProps(engineType, NodeEngine.nodePathEnv(nodeModules.to[immutable.Seq]))
 
     withActorRefFactory(state, this.getClass.getName) {
       arf =>
