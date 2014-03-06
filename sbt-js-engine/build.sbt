@@ -16,11 +16,16 @@ resolvers ++= Seq(
 
 libraryDependencies ++= Seq(
   "com.typesafe" %% "jse" % "1.0.0-SNAPSHOT",
+  "com.typesafe" %% "npm" % "1.0.0-SNAPSHOT",
   "org.specs2" %% "specs2" % "2.2.2" % "test",
   "junit" % "junit" % "4.11" % "test"
 )
 
 addSbtPlugin("com.typesafe.sbt" % "sbt-web" % "1.0.0-SNAPSHOT")
+
+scriptedSettings
+
+scriptedLaunchOpts <+= version apply { v => s"-Dproject.version=$v" }
 
 publishMavenStyle := false
 
