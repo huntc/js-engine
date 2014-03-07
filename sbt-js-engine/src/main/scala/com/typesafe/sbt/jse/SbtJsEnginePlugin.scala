@@ -55,10 +55,8 @@ object SbtJsEnginePlugin extends sbt.Plugin {
     npmNodeModules := Def.task {
       val npmDirectory = baseDirectory.value / NodeModules
       val npmPackageJson = baseDirectory.value / PackageJson
-      import sbinary.DefaultProtocol._
-      if (npmPackageJson.exists &&
-        (npmPackageJsonLastModified.value > npmPackageJsonLastModified.previous.getOrElse(0L) || !npmDirectory.exists())
-      ) {
+      val cacheDirectory = streams.value.cacheDirectory / "npm"
+      val runUpdate = FileFunction.cached(cacheDirectory, FilesInfo.hash) { _ =>
         implicit val timeout = Timeout(npmTimeout.value)
         val pendingExitValue = SbtWebPlugin.withActorRefFactory(state.value, this.getClass.getName) {
           arf =>
@@ -82,8 +80,9 @@ object SbtJsEnginePlugin extends sbt.Plugin {
         if (Await.result(pendingExitValue, timeout.duration) != 0) {
           sys.error("Problems with NPM resolution. Aborting build.")
         }
+        npmDirectory.***.get.toSet
       }
-      npmDirectory.***.get
+      runUpdate(Set(npmPackageJson)).toSeq
     }.dependsOn(webJarsNodeModules in Plugin).value,
 
     nodeModuleGenerators <+= npmNodeModules,
