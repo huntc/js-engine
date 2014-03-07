@@ -11,3 +11,8 @@ $ exists node_modules/console-browserify/index.js
 $ copy-file package2.json package.json
 > web-assets:webNodeModules
 $ exists node_modules/console-browserify/index.js
+
+# Remove the package.json file and expect the node_modules to disappear
+$ delete package.json
+> web-assets:webNodeModules
+-$ exists node_modules

@@ -54,33 +54,39 @@ object SbtJsEnginePlugin extends sbt.Plugin {
       val npmDirectory = baseDirectory.value / NodeModules
       val npmPackageJson = baseDirectory.value / PackageJson
       val cacheDirectory = streams.value.cacheDirectory / "npm"
-      val runUpdate = FileFunction.cached(cacheDirectory, FilesInfo.hash) { _ =>
-        implicit val timeout = Timeout(npmTimeout.value)
-        val pendingExitValue = SbtWebPlugin.withActorRefFactory(state.value, this.getClass.getName) {
-          arf =>
-            val webJarsNodeModulesPath = (webJarsNodeModulesDirectory in Plugin).value.getCanonicalPath
-            val nodePathEnv = NodeEngine.nodePathEnv(immutable.Seq(webJarsNodeModulesPath))
-            val engineProps = engineTypeToProps(engineType.value, nodePathEnv)
-            val engine = arf.actorOf(engineProps)
-            val npm = new Npm(engine, (webJarsNodeModulesDirectory in Plugin).value / "npm" / "lib" / "npm.js")
-            import ExecutionContext.Implicits.global
-            for (
-              result <- npm.update()
-            ) yield {
-              // TODO: We need to stream the output and error channels. The js engine needs to change in this regard so that the
-              // stdio sink and sources can be exposed through the NPM library and then adopted here.
-              val logger = streams.value.log
-              new String(result.output.toArray, "UTF-8").split("\n").foreach(s => logger.info(s))
-              new String(result.error.toArray, "UTF-8").split("\n").foreach(s => if (result.exitValue == 0) logger.info(s) else logger.error(s))
-              result.exitValue
+      val runUpdate = FileFunction.cached(cacheDirectory, FilesInfo.hash) {
+        _ =>
+          if (npmPackageJson.exists) {
+            implicit val timeout = Timeout(npmTimeout.value)
+            val pendingExitValue = SbtWebPlugin.withActorRefFactory(state.value, this.getClass.getName) {
+              arf =>
+                val webJarsNodeModulesPath = (webJarsNodeModulesDirectory in Plugin).value.getCanonicalPath
+                val nodePathEnv = NodeEngine.nodePathEnv(immutable.Seq(webJarsNodeModulesPath))
+                val engineProps = engineTypeToProps(engineType.value, nodePathEnv)
+                val engine = arf.actorOf(engineProps)
+                val npm = new Npm(engine, (webJarsNodeModulesDirectory in Plugin).value / "npm" / "lib" / "npm.js")
+                import ExecutionContext.Implicits.global
+                for (
+                  result <- npm.update()
+                ) yield {
+                  // TODO: We need to stream the output and error channels. The js engine needs to change in this regard so that the
+                  // stdio sink and sources can be exposed through the NPM library and then adopted here.
+                  val logger = streams.value.log
+                  new String(result.output.toArray, "UTF-8").split("\n").foreach(s => logger.info(s))
+                  new String(result.error.toArray, "UTF-8").split("\n").foreach(s => if (result.exitValue == 0) logger.info(s) else logger.error(s))
+                  result.exitValue
+                }
             }
-        }
-        if (Await.result(pendingExitValue, timeout.duration) != 0) {
-          sys.error("Problems with NPM resolution. Aborting build.")
-        }
-        npmDirectory.***.get.toSet
+            if (Await.result(pendingExitValue, timeout.duration) != 0) {
+              sys.error("Problems with NPM resolution. Aborting build.")
+            }
+            npmDirectory.***.get.toSet
+          } else {
+            IO.delete(npmDirectory)
+            Set.empty
+          }
       }
-      if (npmPackageJson.exists) runUpdate(Set(npmPackageJson)).toSeq else Nil
+      runUpdate(Set(npmPackageJson)).toSeq
     }.dependsOn(webJarsNodeModules in Plugin).value,
 
     nodeModuleGenerators <+= npmNodeModules,
