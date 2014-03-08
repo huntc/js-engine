@@ -1,6 +1,6 @@
 lazy val root = Project("plugins", file(".")).dependsOn(plugin)
 
-lazy val plugin = file("../").getCanonicalFile.toURI
+lazy val plugin = ProjectRef(file("../../").getCanonicalFile.toURI, "sbt-js-engine")
 
 resolvers ++= Seq(
   Resolver.url("sbt snapshot plugins", url("http://repo.scala-sbt.org/scalasbt/sbt-plugin-snapshots"))(Resolver.ivyStylePatterns),
