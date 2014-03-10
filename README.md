@@ -1,6 +1,8 @@
 JavaScript Engine
 =================
 
+[![Build Status](https://api.travis-ci.org/typesafehub/js-engine.png?branch=master)](https://travis-ci.org/typesafehub/js-engine)
+
 The JavaScript Engine library (jse) provides an [Actor](http://en.wikipedia.org/wiki/Actor_model) based abstraction so that JavaScript code can be 
 executed in a browser-less fashion. In-jvm support is provided in the form of [Trireme](https://github.com/apigee/trireme#trireme),
 a Node API for [Rhino](https://developer.mozilla.org/en/docs/Rhino). Standalone Rhino is also supported with a RhinoShell environment.

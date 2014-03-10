@@ -1,0 +1,2 @@
+language: scala
+script: sbt test sbt-js-engine/test sbt-js-engine/scripted
