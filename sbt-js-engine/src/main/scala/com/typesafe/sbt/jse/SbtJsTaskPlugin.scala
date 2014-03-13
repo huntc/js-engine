@@ -17,18 +17,20 @@ import scala.collection.immutable
 import com.typesafe.jse._
 import com.typesafe.sbt.web.SbtWebPlugin._
 import akka.pattern.ask
-import scala.concurrent.duration.FiniteDuration
 import com.typesafe.sbt.web.incremental
 import com.typesafe.sbt.web.CompileProblems
 import com.typesafe.jse.Engine.JsExecutionResult
 import com.typesafe.sbt.web.incremental.OpSuccess
 import sbt.Configuration
 import sbinary.{Input, Output, Format}
+import scala.concurrent.duration._
 
 /**
  * The commonality of JS task execution oriented plugins is captured by this class.
  */
-object SbtJsTaskPlugin extends sbt.Plugin {
+object SbtJsTaskPlugin extends AutoPlugin {
+
+  def select = SbtJsEnginePlugin
 
   object JsTaskKeys {
 
@@ -41,15 +43,35 @@ object SbtJsTaskPlugin extends sbt.Plugin {
     val timeoutPerSource = SettingKey[FiniteDuration]("jstask-timeout-per-source", "The maximum number of seconds to wait per source file processed by the JS task.")
   }
 
+
+  import WebKeys._
+  import JsEngineKeys._
   import JsTaskKeys._
 
-  import scala.concurrent.duration._
+  val jsTaskSpecificUnscopedConfigSettings = Seq(
+    fileInputHasher := OpInputHasher[File](f => OpInputHash.hashString(f.getAbsolutePath + "|" + jsOptions.value)),
+    jsOptions := "{}",
+    resourceManaged := target.value / moduleName.value
+  )
 
-  val jsTaskSettings = Seq(
+  val jsTaskSpecificUnscopedSettings =
+    inConfig(Assets)(jsTaskSpecificUnscopedConfigSettings) ++
+      inConfig(TestAssets)(jsTaskSpecificUnscopedConfigSettings) ++
+      Seq(
+        shellSource := {
+          SbtWebPlugin.copyResourceTo(
+            (target in Plugin).value / moduleName.value,
+            shellFile.value,
+            SbtJsTaskPlugin.getClass.getClassLoader,
+            streams.value.cacheDirectory / "copy-resource"
+          )
+        }
+      )
+
+  override def projectSettings = Seq(
     timeoutPerSource := 30.seconds
   )
 
-  val jsEngineAndTaskSettings = SbtJsEnginePlugin.jsEngineSettings ++ jsTaskSettings
 
   /**
    * Thrown when there is an unexpected problem to do with the task's execution.
@@ -114,37 +136,6 @@ object SbtJsTaskPlugin extends sbt.Plugin {
     implicit val sourceResultPairFormat = jsonFormat2(SourceResultPair)
     implicit val problemResultPairFormat = jsonFormat2(ProblemResultsPair)
   }
-
-}
-
-abstract class SbtJsTaskPlugin extends sbt.Plugin {
-
-  import SbtJsTaskPlugin._
-
-  import WebKeys._
-  import JsEngineKeys._
-  import SbtJsTaskPlugin.JsTaskKeys._
-
-  val jsTaskSpecificUnscopedConfigSettings = Seq(
-    fileInputHasher := OpInputHasher[File](f => OpInputHash.hashString(f.getAbsolutePath + "|" + jsOptions.value)),
-    jsOptions := "{}",
-    resourceManaged := target.value / moduleName.value
-  )
-
-  val jsTaskSpecificUnscopedSettings =
-    inConfig(Assets)(jsTaskSpecificUnscopedConfigSettings) ++
-      inConfig(TestAssets)(jsTaskSpecificUnscopedConfigSettings) ++
-      Seq(
-        shellSource := {
-          SbtWebPlugin.copyResourceTo(
-            (target in Plugin).value / moduleName.value,
-            shellFile.value,
-            SbtJsTaskPlugin.getClass.getClassLoader,
-            streams.value.cacheDirectory / "copy-resource"
-          )
-        }
-      )
-
 
   // node.js docs say *NOTHING* about what encoding is used when you write a string to stdout.
   // It seems that they have it hard coded to use UTF-8, some small tests I did indicate that changing the platform

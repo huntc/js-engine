@@ -15,7 +15,9 @@ import scala.concurrent.duration._
 /**
  * Declares the main parts of a WebDriver based plugin for sbt.
  */
-object SbtJsEnginePlugin extends sbt.Plugin {
+object SbtJsEnginePlugin extends AutoPlugin {
+
+  def select = SbtWebPlugin
 
   object JsEngineKeys {
 
@@ -93,7 +95,7 @@ object SbtJsEnginePlugin extends sbt.Plugin {
     nodeModuleDirectories += baseDirectory.value / NodeModules
   )
 
-  val jsEngineSettings: Seq[Setting[_]] = Seq(
+  override def projectSettings: Seq[Setting[_]] = Seq(
     engineType := EngineType.Trireme,
     parallelism := java.lang.Runtime.getRuntime.availableProcessors() + 1,
     npmTimeout := 2.minutes
