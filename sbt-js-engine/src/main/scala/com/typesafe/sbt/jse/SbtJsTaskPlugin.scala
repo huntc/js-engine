@@ -28,7 +28,7 @@ import sbinary.{Input, Output, Format}
 /**
  * The commonality of JS task execution oriented plugins is captured by this class.
  */
-object SbtJsTaskPlugin {
+object SbtJsTaskPlugin extends sbt.Plugin {
 
   object JsTaskKeys {
 
@@ -346,7 +346,6 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
   private def addUnscopedJsSourceFileTasks(sourceFileTask: TaskKey[Seq[File]]): Seq[Setting[_]] = {
     Seq(
       resourceGenerators <+= sourceFileTask,
-      resourceManaged in sourceFileTask := resourceManaged.value / moduleName.value,
       managedResourceDirectories += (resourceManaged in sourceFileTask).value
     )
   }
@@ -361,6 +360,8 @@ abstract class SbtJsTaskPlugin extends sbt.Plugin {
     Seq(
       sourceFileTask in Assets := jsSourceFileTask(sourceFileTask, Assets).dependsOn(nodeModules in Plugin).value,
       sourceFileTask in TestAssets := jsSourceFileTask(sourceFileTask, TestAssets).dependsOn(nodeModules in Plugin).value,
+      resourceManaged in sourceFileTask in Assets := webTarget.value / sourceFileTask.key.label / "main",
+      resourceManaged in sourceFileTask in TestAssets := webTarget.value / sourceFileTask.key.label / "test",
       sourceFileTask := (sourceFileTask in Assets).value
     ) ++
       inConfig(Assets)(addUnscopedJsSourceFileTasks(sourceFileTask)) ++
